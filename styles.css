@@ -456,6 +456,15 @@
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
   }
+  /* Dim a pill when its value isn't currently affecting the simulation
+     (e.g., Cash interest rate on a B&H strategy, or Annual raise when
+     Monthly = 0). The dropdown stays clickable so the user can adjust it. */
+  .analytics-metrics .metric.metric--dim {
+    opacity: 0.42;
+    background: rgba(100, 116, 139, 0.06);
+    border-color: rgba(100, 116, 139, 0.18);
+  }
+  .analytics-metrics .metric.metric--dim:hover { opacity: 0.75; }
   .analytics-metrics .metric .metric-select {
     background: transparent;
     border: none;
@@ -656,6 +665,10 @@
   .heatmap-table td.heatmap-cell {
     position: relative;
     z-index: 0;
+    cursor: pointer;
+  }
+  .heatmap-table td.heatmap-cell.empty {
+    cursor: default;
   }
   .heatmap-table td.heatmap-cell.empty {
     background: transparent;
@@ -675,6 +688,9 @@
     display: block;
     max-width: 100%;
     max-height: 100%;
+  }
+  .spiral-bar {
+    cursor: pointer;
   }
   .spiral-loading {
     width: 100%;
@@ -729,24 +745,24 @@
     background: var(--surface);
     border: 1px solid rgba(34, 211, 238, 0.4);
     border-radius: 6px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     box-shadow: 0 12px 28px rgba(0,0,0,0.6);
     font-family: 'DM Sans', sans-serif;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text);
     line-height: 1.5;
-    max-width: 260px;
+    max-width: 420px;
   }
   .heatmap-tooltip[hidden] { display: none; }
   .heatmap-tooltip .tt-period {
-    font-size: 10px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     color: var(--text-muted);
     margin-bottom: 4px;
   }
   .heatmap-tooltip .tt-scenario {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-bottom: 6px;
     line-height: 1.4;
@@ -754,8 +770,21 @@
   .heatmap-tooltip .tt-strat {
     font-weight: 600;
     color: var(--accent);
-    font-size: 12px;
+    font-size: 16px;
     margin-bottom: 6px;
+  }
+  .heatmap-tooltip .tt-balance-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 2px 0 4px;
+  }
+  .heatmap-tooltip .tt-balance-row strong {
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    margin-left: 4px;
   }
   .heatmap-tooltip .tt-bars {
     display: flex;
@@ -770,7 +799,7 @@
     align-items: center;
   }
   .heatmap-tooltip .tt-bar-label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -797,7 +826,7 @@
   }
   .heatmap-tooltip .tt-bar-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text);
     white-space: nowrap;
@@ -810,7 +839,7 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 12px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .heatmap-tooltip .tt-foot > span:first-child {
     color: var(--text-muted);

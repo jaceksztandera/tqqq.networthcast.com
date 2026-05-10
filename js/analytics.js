@@ -156,6 +156,9 @@ function toggleAnalytics() {
   } else {
     modal.setAttribute('hidden', '');
     document.body.style.overflow = '';
+    // Abort any in-progress heatmap build so we don't keep simulating ~3,500
+    // cells in the background while the modal isn't even visible.
+    analyticsBuildEpoch++;
   }
 }
 
@@ -397,14 +400,23 @@ document.addEventListener('change', (e) => {
     const value     = +td.dataset.value;
     const derived   = +td.dataset.derived;
     const maxDD     = +td.dataset.maxDd;
-    let baselineVal = derived > 0 ? value / derived : 0;
     const stratLabel = STRATEGY_LABELS[analyticsStrategy] || 'Adaptive';
+
+    // Run (or reuse cached) simulate() for this exact (startYear, period)
+    // range so we can render the same line chart that spiral mode uses.
+    const cellSim = getCellSim(startYear, period);
+    let lineChart = '';
+    if (cellSim) {
+      const series = strategyDateValues(cellSim, analyticsStrategy);
+      if (series.length >= 2) lineChart = buildTooltipLineChart(series);
+    }
+
+    // Baseline label + ratio for the footer.
+    let baselineVal = derived > 0 ? value / derived : 0;
     let baseLabel;
     if (analyticsBaseline === 'custom') {
       baseLabel = `Target ${fmtFull(analyticsCustomTarget)}`;
     } else if (analyticsBaseline === 'custom-pct') {
-      // Pull the previous-period cell's value off the DOM so the tooltip can
-      // show the year-over-year threshold (prev × (1 + pct%)).
       const prevPeriod = period - 1;
       let prevValue = +(sliderToInitial(+document.getElementById('slider-initial').value));
       if (prevPeriod > 0) {
@@ -412,57 +424,22 @@ document.addEventListener('change', (e) => {
         if (prevTd && prevTd.dataset.value) prevValue = +prevTd.dataset.value;
       }
       baselineVal = prevValue * (1 + analyticsCustomGrowthPct / 100);
+      const sign   = analyticsCustomGrowthPct >= 0 ? '+' : '';
       const pctTxt = (analyticsCustomGrowthPct % 1 === 0 ? analyticsCustomGrowthPct.toFixed(0) : analyticsCustomGrowthPct.toFixed(1));
-      baseLabel = prevPeriod > 0
-        ? `+${pctTxt}% from ${prevPeriod}y (${fmtFull(prevValue)})`
-        : `+${pctTxt}% from start (${fmtFull(prevValue)})`;
+      baseLabel = `${sign}${pctTxt}% target`;
     } else {
       baseLabel = BASELINE_LABELS[analyticsBaseline] || 'Baseline';
     }
-    const maxV = Math.max(value, baselineVal) || 1;
-    const w1 = (value / maxV * 100).toFixed(1);
-    const w2 = (baselineVal / maxV * 100).toFixed(1);
-    const ddStr = Number.isFinite(maxDD) && maxDD > 0 ? '−' + (maxDD * 100).toFixed(1) + '%' : '0.0%';
-
-    // Investment scenario — pulled live from the sliders so the tooltip
-    // always reflects the params currently driving the heatmap. Hides any
-    // line item that's at zero/default to keep the line short.
-    const initial = sliderToInitial(+document.getElementById('slider-initial').value);
-    const monthly = +document.getElementById('slider-monthly').value;
-    const annualRaise = +document.getElementById('slider-raise').value / 100;
-    const scenarioParts = [];
-    if (initial > 0) scenarioParts.push(`Initial ${fmtFull(initial)}`);
-    if (monthly > 0) {
-      let m = `Monthly ${fmtFull(monthly)}`;
-      if (annualRaise > 0) m += ` (${(annualRaise * 100).toFixed(annualRaise * 100 % 1 === 0 ? 0 : 1)}%/y raise)`;
-      scenarioParts.push(m);
-    }
-    if (analyticsStrategy === 'adaptive') {
-      const tu = document.getElementById('select-tqqq-above').value;
-      const td2 = document.getElementById('select-tqqq-below').value;
-      const tw = document.getElementById('select-tqqq-window').value;
-      scenarioParts.push(`→9sig ×${tu} · →TQQQ ×${td2} · ${tw}y window`);
-    }
+    const ratioTxt = baselineVal > 0 ? (value / baselineVal).toFixed(2) + '×' : '—';
+    const ddStr   = Number.isFinite(maxDD) && maxDD > 0 ? '−' + (maxDD * 100).toFixed(1) + '%' : '0.0%';
 
     tooltip.innerHTML = `
-      <div class="tt-period">Invested ${startYear} · ${period}y later · ended ${endYear}</div>
-      <div class="tt-scenario">${scenarioParts.join(' &middot; ')}</div>
-      <div class="tt-strat">${stratLabel} Final Value</div>
-      <div class="tt-bars">
-        <div class="tt-bar-row tt-bar-primary">
-          <span class="tt-bar-label">${stratLabel}</span>
-          <div class="tt-bar-track"><div class="tt-bar-fill" style="width:${w1}%"></div></div>
-          <span class="tt-bar-value">(${fmtFull(Math.round(value))})</span>
-        </div>
-        <div class="tt-bar-row">
-          <span class="tt-bar-label">vs ${baseLabel}</span>
-          <div class="tt-bar-track"><div class="tt-bar-fill" style="width:${w2}%"></div></div>
-          <span class="tt-bar-value">(${fmtFull(Math.round(baselineVal))})</span>
-        </div>
-      </div>
+      <div class="tt-period">${stratLabel} &middot; INVESTED ${startYear} &middot; ${period}Y</div>
+      <div class="tt-strat">${fmtFull(Math.round(value))} <span style="color:var(--text-muted);font-size:11px;font-weight:500">(ended ${endYear})</span></div>
+      ${lineChart}
       <div class="tt-foot">
-        <span>Max drawdown</span>
-        <span class="tt-dd">${ddStr}</span>
+        <span>vs ${baseLabel}: <strong style="color:var(--text)">${ratioTxt}</strong></span>
+        <span class="tt-dd">DD ${ddStr}</span>
       </div>
     `;
   }
@@ -506,45 +483,65 @@ function refreshAnalytics() {
 // user has set on the page sliders shows up correctly even if it's not in
 // the canonical list.
 const METRIC_OPTS = {
-  initial: [0, 1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000],
-  monthly: [0, 100, 250, 500, 1000, 2000, 5000, 10000, 25000],
-  raise:   [0, 1, 2, 3, 5, 7, 10, 15],
-  rate:    [0, 1, 2, 3, 4, 5, 6, 8],
-  tu:      [1.0, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 4.0, 5.0],
-  td:      [1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0],
-  tw:      [1, 2, 3, 5, 6, 8, 10, 12, 15, 20, 25, 30],
+  initial: [0, 100, 500, 1000, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 35000, 50000, 75000, 100000, 150000, 200000, 250000, 350000, 500000, 750000, 1000000, 1500000, 2000000, 3000000, 5000000, 10000000],
+  monthly: [0, 50, 100, 150, 200, 250, 300, 400, 500, 600, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000, 5000, 7500, 10000, 15000, 20000, 25000, 50000, 100000],
+  raise:   [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 10, 12, 15, 20],
+  rate:    [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8, 10, 12, 15],
+  tu:      [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.2, 2.4, 2.5, 2.7, 3.0, 3.3, 3.5, 4.0, 4.5, 5.0],
+  td:      [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.3, 2.5, 3.0],
+  tw:      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 18, 20, 22, 25, 28, 30],
 };
 
-function metricSelect(key, label, current, fmt) {
+function metricSelect(key, label, current, fmt, dim) {
   const base = METRIC_OPTS[key].slice();
   if (!base.some(v => Math.abs(v - current) < 1e-9)) base.push(current);
   base.sort((a, b) => a - b);
   const optionsHtml = base.map(v =>
     `<option value="${v}"${Math.abs(v - current) < 1e-9 ? ' selected' : ''}>${fmt(v)}</option>`
   ).join('');
-  return `<span class="metric">${label} <select class="metric-select" data-metric-key="${key}">${optionsHtml}</select></span>`;
+  const cls = dim ? 'metric metric--dim' : 'metric';
+  return `<span class="${cls}" title="${dim ? 'Not currently affecting the result' : ''}">${label} <select class="metric-select" data-metric-key="${key}">${optionsHtml}</select></span>`;
 }
 
 function renderAnalyticsMetrics(initial, monthly, annualRaise, rate, tqqqAboveMult, tqqqBelowMult, tqqqWindow, strategy) {
   const m = document.getElementById('analytics-metrics');
   if (!m) return;
   const pct = (x) => (x % 1 === 0 ? x.toFixed(0) : x.toFixed(1)) + '%';
-  const items = [];
-  // Hide each pill when its value can't influence the result:
-  //   - Initial:           hide when 0
-  //   - Monthly:           hide when 0 (and the raise pill, since raise scales monthly)
-  //   - Annual raise:      hide when 0 OR when monthly = 0 (no contributions to scale)
-  //   - Cash interest rate: hide for B&H strategies (no cash held) and when no cash flow
-  //                         (monthly = 0 AND initial = 0)
-  const usesCash = (strategy === '9sig' || strategy === 'adaptive');
-  if (initial > 0)                       items.push(metricSelect('initial', 'Initial', initial, fmtFull));
-  if (monthly > 0)                       items.push(metricSelect('monthly', 'Monthly', monthly, fmtFull));
-  if (monthly > 0 && annualRaise > 0)    items.push(metricSelect('raise',   'Annual raise', annualRaise * 100, pct));
-  if (usesCash && (initial > 0 || monthly > 0)) items.push(metricSelect('rate', 'Cash interest rate', rate * 100, pct));
-  if (strategy === 'adaptive') {
-    items.push(metricSelect('tu', '→ 9sig', tqqqAboveMult, x => `×${x}`));
-    items.push(metricSelect('td', '→ TQQQ', tqqqBelowMult, x => `×${x}`));
-    items.push(metricSelect('tw', 'Window', tqqqWindow,   x => `${x}y`));
+  // A param is active when EITHER the chosen strategy OR the baseline it's
+  // compared against actually uses it. Otherwise dim — visible but signaled
+  // as not affecting the result.
+  //   Cash interest rate — used by 9sig & Adaptive (they hold cash that
+  //     earns this rate) AND by the "Compounded Cash" baseline (which IS
+  //     the cash-only growth line). B&H strategies + B&H baselines + Custom
+  //     Target + Custom Growth ignore it. Also dim when there's no cash
+  //     flow at all (initial = 0 AND monthly = 0).
+  //   Adaptive params (→9sig / →TQQQ / Window) — only relevant when
+  //     Adaptive drives the strategy itself OR the comparison baseline.
+  const stratUsesCash    = (strategy === '9sig' || strategy === 'adaptive');
+  const baselineUsesCash = (analyticsBaseline === 'compounded' || analyticsBaseline === '9sig' || analyticsBaseline === 'adaptive');
+  const cashActive       = stratUsesCash || baselineUsesCash;
+  const adaptiveActive   = (strategy === 'adaptive' || analyticsBaseline === 'adaptive');
+  const dimInitial       = initial <= 0;
+  const dimMonthly       = monthly <= 0;
+  const dimRaise         = monthly <= 0 || annualRaise <= 0;
+  // Cash pill: hide entirely when neither strategy nor baseline uses cash
+  // (it's pure noise then). Show but dim if cash is in play but there's no
+  // cash flow yet (initial = 0 AND monthly = 0).
+  const dimRate          = (initial <= 0 && monthly <= 0);
+  const items = [
+    metricSelect('initial', 'Initial', initial, fmtFull, dimInitial),
+    metricSelect('monthly', 'Monthly', monthly, fmtFull, dimMonthly),
+    metricSelect('raise',   'Annual raise', annualRaise * 100, pct, dimRaise),
+  ];
+  if (cashActive) {
+    items.push(metricSelect('rate', 'Cash interest rate', rate * 100, pct, dimRate));
+  }
+  if (adaptiveActive) {
+    items.push(
+      metricSelect('tu', '→ 9sig', tqqqAboveMult, x => `×${x}`, false),
+      metricSelect('td', '→ TQQQ', tqqqBelowMult, x => `×${x}`, false),
+      metricSelect('tw', 'Window', tqqqWindow,   x => `${x}y`,  false),
+    );
   }
   m.innerHTML = items.join('');
 }
@@ -565,40 +562,47 @@ function positionSpiralTooltip(tooltip, e) {
   tooltip.style.top  = Math.max(4, y) + 'px';
 }
 
-// Render the rich tooltip (same .tt-* classes as the heatmap grid mode) for
-// a spiral-mode bar hover.
+// Render the rich tooltip for a spiral-mode bar hover.
+// The "amount" answer is: "if I'd started investing in this year with my
+// current params, what's my portfolio worth today?" — we run a fresh
+// simulate() from start-of-year → most recent quarter (lazily cached per
+// year) and show its final value plus a small SVG line chart of the full
+// growth trajectory.
 function showSpiralTooltip(tooltip, e, d, threshold) {
   const stratLabel = STRATEGY_LABELS[analyticsStrategy] || 'Adaptive';
   const sign       = d.pct >= 0 ? '+' : '';
   const hit        = d.pct >= threshold;
+  const hitColor   = hit ? '#22c55e' : '#ef4444';
   const tag        = d.partial ? ' (YTD)' : '';
-  const startLabel = `Start of ${d.year}`;
-  const endLabel   = d.partial ? 'Latest' : `End of ${d.year}`;
-  const thrTxt     = (threshold >= 0 ? '+' : '') + threshold + '%';
-  // Bars scaled relative to the larger of the two values, like the heatmap
-  // tooltip's strategy-vs-baseline pair.
-  const maxV = Math.max(d.prevPrice, d.price) || 1;
-  const w1   = (d.prevPrice / maxV * 100).toFixed(1);
-  const w2   = (d.price     / maxV * 100).toFixed(1);
+  const thrSign    = threshold >= 0 ? '+' : '';
+  const thrTxt     = `${thrSign}${threshold}%`;
+
+  // Run (or fetch from cache) a sim starting from this bar's year.
+  const startSim    = getYearStartSim(d.year);
+  let startBalance  = 0;
+  let todayValue    = 0;
+  let lineChart     = '';
+  let yearsLater    = 0;
+  let endYearLabel  = '';
+  if (startSim) {
+    const series = strategyDateValues(startSim, analyticsStrategy);
+    if (series.length) {
+      startBalance  = series[0].value;
+      todayValue    = series[series.length - 1].value;
+      lineChart     = buildTooltipLineChart(series);
+      const endY    = parseInt(series[series.length - 1].date.substring(0, 4));
+      yearsLater    = endY - d.year;
+      endYearLabel  = String(endY);
+    }
+  }
 
   tooltip.innerHTML = `
-    <div class="tt-period">${stratLabel} &middot; ${d.year}${tag}</div>
-    <div class="tt-strat">${sign}${d.pct.toFixed(2)}%</div>
-    <div class="tt-bars">
-      <div class="tt-bar-row">
-        <span class="tt-bar-label">${startLabel}</span>
-        <div class="tt-bar-track"><div class="tt-bar-fill" style="width:${w1}%"></div></div>
-        <span class="tt-bar-value">(${fmtFull(Math.round(d.prevPrice))})</span>
-      </div>
-      <div class="tt-bar-row tt-bar-primary">
-        <span class="tt-bar-label">${endLabel}</span>
-        <div class="tt-bar-track"><div class="tt-bar-fill" style="width:${w2}%"></div></div>
-        <span class="tt-bar-value">(${fmtFull(Math.round(d.price))})</span>
-      </div>
-    </div>
+    <div class="tt-period">${stratLabel} &middot; STARTED ${d.year}</div>
+    <div class="tt-strat">${fmtFull(Math.round(todayValue))}${yearsLater > 0 ? ` <span style="color:var(--text-muted);font-size:11px;font-weight:500">(${yearsLater}y later, ${endYearLabel})</span>` : ''}</div>
+    ${lineChart}
     <div class="tt-foot">
-      <span>vs threshold (${thrTxt})</span>
-      <span class="tt-dd" style="color:${hit ? '#22c55e' : '#ef4444'}">${hit ? '✓ hit' : '✗ miss'}</span>
+      <span>${d.year}${tag} alone: <strong style="color:var(--text)">${sign}${d.pct.toFixed(2)}%</strong></span>
+      <span class="tt-dd" style="color:${hitColor}">vs ${thrTxt} ${hit ? '✓' : '✗'}</span>
     </div>
   `;
   tooltip.removeAttribute('hidden');
@@ -617,15 +621,25 @@ const SPIRAL_ASSET_FOR_STRATEGY = {
 
 // Extract the strategy's quarterly (date, value) pairs from a simulate()
 // result. Used by the spiral to get per-year portfolio values.
+//
+// `simulate()` builds bhPoints / qqqPoints / spyPoints starting from qi = 1
+// (it skips the entry quarter), while log and adaptivePoints include qi = 0.
+// We normalize this here by prepending the entry-quarter snapshot to the BH
+// variants so every series starts at the user's actual starting balance —
+// otherwise per-year YoY math downstream would use Q1 of year Y as Y's start
+// instead of Q4 of (Y-1), reading as ~9-month growth instead of full-year.
 function strategyDateValues(sim, strat) {
-  switch (strat) {
-    case '9sig':     return sim.log           ? sim.log.map(l => ({ date: l.date, value: l.total })) : [];
-    case 'bh-tqqq':  return sim.bhPoints      || [];
-    case 'bh-qqq':   return sim.qqqPoints     || [];
-    case 'bh-spy':   return sim.spyPoints     || [];
-    case 'adaptive': return sim.adaptivePoints|| [];
-    default:         return [];
+  if (strat === '9sig')     return sim.log ? sim.log.map(l => ({ date: l.date, value: l.total })) : [];
+  if (strat === 'adaptive') return sim.adaptivePoints || [];
+  const raw = strat === 'bh-tqqq' ? sim.bhPoints
+            : strat === 'bh-qqq'  ? sim.qqqPoints
+            : strat === 'bh-spy'  ? sim.spyPoints
+                                  : null;
+  if (!raw || !raw.length) return [];
+  if (sim.log && sim.log.length && raw[0].date !== sim.log[0].date) {
+    return [{ date: sim.log[0].date, value: sim.log[0].total }, ...raw];
   }
+  return raw;
 }
 
 // Cache for the spiral's full-range simulate() result so that dragging the
@@ -633,6 +647,265 @@ function strategyDateValues(sim, strat) {
 // inputs) doesn't trigger a fresh simulation each frame.
 let _spiralSim = null;
 let _spiralSimKey = null;
+
+// Cache for the rendered spiral SVG. When only the threshold changes (slider
+// drag), we skip the full SVG rebuild and just repaint the bar colors.
+let _spiralRenderKey = null;
+let _spiralBarsSel   = null;
+let _spiralPoints    = null;
+
+// Per-start-year simulate() cache for the spiral tooltip — computes lazily
+// on first hover, reused for repeat hovers. Invalidated when sim params
+// change (same key as the full-range sim cache).
+let _perYearSims    = new Map();
+let _perYearSimsKey = null;
+
+// Per-(startYear, period) simulate() cache for the heatmap-cell tooltip.
+// Populated lazily on first hover of each cell, reused after that.
+let _cellSims    = new Map();
+let _cellSimsKey = null;
+
+// Run simulate() for a heatmap cell's exact (startYear, period) range and
+// cache the result. Cell entries are anchored at "start of startYear" (= end
+// of previous year's last quarter) through end of (startYear + period - 1).
+function getCellSim(startYear, period) {
+  const initial      = sliderToInitial(+document.getElementById('slider-initial').value);
+  const monthly      = +document.getElementById('slider-monthly').value;
+  const annualRaise  = +document.getElementById('slider-raise').value / 100;
+  const rate         = +document.getElementById('slider-rate').value / 100;
+  const tqqqAbove    = +document.getElementById('select-tqqq-above').value;
+  const tqqqBelow    = +document.getElementById('select-tqqq-below').value;
+  const tqqqWindow   = +document.getElementById('select-tqqq-window').value;
+  const switchTo9sig = tqqqAbove * 100;
+  const switchToAll  = tqqqBelow > 0 ? 100 / tqqqBelow : 100;
+
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow });
+  if (_cellSimsKey !== key) {
+    _cellSims    = new Map();
+    _cellSimsKey = key;
+  }
+  const cellKey = startYear + ':' + period;
+  if (_cellSims.has(cellKey)) return _cellSims.get(cellKey);
+
+  const endYear = startYear + period - 1;
+  let prevYearLast = -1, firstOfStart = -1, lastOfEnd = -1;
+  for (let i = 0; i < quarterlyData.length; i++) {
+    const y = parseInt(quarterlyData[i][0].substring(0, 4));
+    if (y === startYear - 1) prevYearLast = i;
+    if (y === startYear && firstOfStart === -1) firstOfStart = i;
+    if (y === endYear) lastOfEnd = i;
+    if (y > endYear) break;
+  }
+  const entryIdx = prevYearLast >= 0 ? prevYearLast : firstOfStart;
+  const exitIdx  = lastOfEnd;
+  if (entryIdx < 0 || exitIdx < 0 || exitIdx <= entryIdx) return null;
+
+  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow);
+  const opts = { switchTo9sig, switchToAllIn: switchToAll, yearsBack: tqqqWindow, adaptiveStates };
+  const sim = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
+  _cellSims.set(cellKey, sim);
+  return sim;
+}
+
+// Run simulate() from "start of `startYear`" to the latest available
+// quarter, with the user's current sliders. Lazy + cached.
+function getYearStartSim(startYear) {
+  const initial      = sliderToInitial(+document.getElementById('slider-initial').value);
+  const monthly      = +document.getElementById('slider-monthly').value;
+  const annualRaise  = +document.getElementById('slider-raise').value / 100;
+  const rate         = +document.getElementById('slider-rate').value / 100;
+  const tqqqAbove    = +document.getElementById('select-tqqq-above').value;
+  const tqqqBelow    = +document.getElementById('select-tqqq-below').value;
+  const tqqqWindow   = +document.getElementById('select-tqqq-window').value;
+  const switchTo9sig = tqqqAbove * 100;
+  const switchToAll  = tqqqBelow > 0 ? 100 / tqqqBelow : 100;
+
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow });
+  if (_perYearSimsKey !== key) {
+    _perYearSims    = new Map();
+    _perYearSimsKey = key;
+  }
+  if (_perYearSims.has(startYear)) return _perYearSims.get(startYear);
+
+  // Entry: last quarter of (startYear - 1) (= start of startYear), or first
+  // quarter of startYear if no prior year exists.
+  let entryIdx = -1;
+  let firstOfYear = -1;
+  for (let i = 0; i < quarterlyData.length; i++) {
+    const y = parseInt(quarterlyData[i][0].substring(0, 4));
+    if (y === startYear - 1) entryIdx = i;
+    if (y === startYear && firstOfYear === -1) firstOfYear = i;
+    if (y > startYear) break;
+  }
+  if (entryIdx < 0) entryIdx = firstOfYear;
+  if (entryIdx < 0) return null;
+  const exitIdx = quarterlyData.length - 1;
+  if (exitIdx <= entryIdx) return null;
+
+  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow);
+  const opts = { switchTo9sig, switchToAllIn: switchToAll, yearsBack: tqqqWindow, adaptiveStates };
+  const sim = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
+  _perYearSims.set(startYear, sim);
+  return sim;
+}
+
+// Spiral tooltip's mini chart. Top strip is a per-year YoY bar chart
+// (positive bars rise above the 0% baseline, negative drop below — bar
+// height proportional to |YoY %|). Bottom is the actual portfolio line
+// over time, with start/end value labels pinned at the line endpoints.
+function buildTooltipLineChart(series, width, height) {
+  width  = width  || 340;
+  height = height || 168; // larger to fit the bigger fonts
+  if (!series || series.length < 2) return '';
+
+  // Group series by year → {year, startIdx, endIdx, startVal, endVal, pct}.
+  const yearGroups = [];
+  let cur = null;
+  for (let i = 0; i < series.length; i++) {
+    const y = parseInt(series[i].date.substring(0, 4));
+    if (!cur || cur.year !== y) {
+      cur = { year: y, startIdx: i, endIdx: i, startVal: series[i].value, endVal: series[i].value };
+      yearGroups.push(cur);
+    } else {
+      cur.endIdx = i;
+      cur.endVal = series[i].value;
+    }
+  }
+  // YoY base is the *previous* year's last value (≈ Dec 31 prev year, which
+  // is "start of this year"). Without this, the first rendered year would
+  // measure Q1→Q4 only and undercount the full-year growth. The first group
+  // (often just the prepended entry-quarter snapshot) has no prior year, so
+  // it falls back to its own startVal — that group is then filtered out
+  // below since rendering a single-point year as a bar is meaningless.
+  yearGroups.forEach((g, i) => {
+    const prev = yearGroups[i - 1];
+    const base = prev ? prev.endVal : g.startVal;
+    g.pct = base > 0 ? (g.endVal / base - 1) * 100 : 0;
+  });
+
+  // Layout: top bar-chart strip, gap, then line chart, then x-axis labels.
+  const padX        = 4;
+  const barTop      = 10;
+  const barH        = 36;
+  const baselineY   = barTop + barH / 2;        // 0% line in bar strip
+  const lineTop     = barTop + barH + 10;       // breathing space
+  const xAxisH      = 18;                       // strip reserved for year labels
+  const lineBot     = height - xAxisH - 2;
+  const lineH       = lineBot - lineTop;
+
+  const w   = width - padX * 2;
+  const dx  = w / (series.length - 1);
+  const xAt = i => padX + i * dx;
+
+  // Bars scaled to the largest |YoY %| seen (capped at 200 to keep extreme
+  // years from collapsing all other bars).
+  let maxAbsPct = 1;
+  for (const g of yearGroups) {
+    const a = Math.abs(g.pct);
+    if (a > maxAbsPct) maxAbsPct = a;
+  }
+  maxAbsPct = Math.min(maxAbsPct, 200);
+  const halfBarSpace = barH / 2 - 3;
+  const barScale     = halfBarSpace / maxAbsPct;
+
+  let bars = '';
+  let barLabels = '';
+  for (let i = 0; i < yearGroups.length; i++) {
+    const g     = yearGroups[i];
+    const prev  = yearGroups[i - 1];
+    const next  = yearGroups[i + 1];
+    // Don't paint a bar for the entry-quarter snapshot group (one data point,
+    // no prior year, used only as the YoY baseline for the next year).
+    if (i === 0 && g.startIdx === g.endIdx) continue;
+    // Left edge: midpoint between previous year's last sample and this
+    // year's first sample, or chart's left edge if this is the first year.
+    const xLeft  = prev ? (xAt(prev.endIdx) + xAt(g.startIdx)) / 2 : xAt(0);
+    // Right edge: midpoint between this year's last sample and next year's
+    // first sample, or chart's right edge if this is the final year.
+    const xRight = next ? (xAt(g.endIdx) + xAt(next.startIdx)) / 2 : xAt(series.length - 1);
+    // Tiny 1px gap between adjacent bars so the histogram reads as discrete
+    // years instead of one continuous strip.
+    const bw     = Math.max(0.5, xRight - xLeft - 1);
+
+    const mag      = Math.min(Math.abs(g.pct), 200);
+    const bh       = mag * barScale;
+    const positive = g.pct >= 0;
+    const by       = positive ? baselineY - bh : baselineY;
+    const fill     = positive ? '#22c55e' : '#ef4444';
+    bars += `<rect x="${xLeft.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fill}"/>`;
+
+    if (bw > 22) {
+      const lbl   = (positive ? '+' : '') + Math.round(g.pct) + '%';
+      const cx    = (xLeft + xRight) / 2;
+      const ly    = positive ? Math.max(9, by - 2)
+                             : Math.min(barTop + barH - 1, by + bh + 9);
+      const color = positive ? '#86efac' : '#fca5a5';
+      barLabels += `<text x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-family="JetBrains Mono" font-size="9" font-weight="600" fill="${color}" stroke="rgba(10,14,23,0.9)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${lbl}</text>`;
+    }
+  }
+
+  // 0% baseline through the bar strip.
+  const baseline = `<line x1="${padX}" y1="${baselineY.toFixed(1)}" x2="${(width - padX).toFixed(1)}" y2="${baselineY.toFixed(1)}" stroke="rgba(255,255,255,0.18)" stroke-width="0.5"/>`;
+
+  // Line chart of portfolio value across the same x-range.
+  let mn = Infinity, mx = -Infinity;
+  for (const p of series) {
+    if (p.value < mn) mn = p.value;
+    if (p.value > mx) mx = p.value;
+  }
+  if (mx <= mn) mx = mn + 1;
+  const yLineAt = v => lineTop + (1 - (v - mn) / (mx - mn)) * lineH;
+
+  let line = '';
+  for (let i = 0; i < series.length; i++) {
+    line += (i === 0 ? 'M' : 'L') + xAt(i).toFixed(1) + ',' + yLineAt(series[i].value).toFixed(1) + ' ';
+  }
+  const area = `M${xAt(0).toFixed(1)},${lineBot.toFixed(1)} ` + line.replace(/^M/, 'L') + `L${xAt(series.length - 1).toFixed(1)},${lineBot.toFixed(1)} Z`;
+
+  // Start / end markers + value labels at the line endpoints. Decide whether
+  // to place each label above or below the dot based on which side has more
+  // breathing room (so labels don't crash into the bar strip or the bottom).
+  const startX = xAt(0),                     startY = yLineAt(series[0].value);
+  const endX   = xAt(series.length - 1),     endY   = yLineAt(series[series.length - 1].value);
+  const labelAbove = (cy) => cy - lineTop > lineH * 0.45;
+  const startLabelY = labelAbove(startY) ? startY - 6 : startY + 12;
+  const endLabelY   = labelAbove(endY)   ? endY   - 6 : endY   + 12;
+  const startTxt = fmtFull(Math.round(series[0].value));
+  const endTxt   = fmtFull(Math.round(series[series.length - 1].value));
+  const endpoints = `
+    <circle cx="${startX.toFixed(1)}" cy="${startY.toFixed(1)}" r="2.6" fill="#22d3ee"/>
+    <circle cx="${endX.toFixed(1)}"   cy="${endY.toFixed(1)}"   r="2.6" fill="#22d3ee"/>
+    <text x="${(startX + 4).toFixed(1)}" y="${startLabelY.toFixed(1)}" text-anchor="start" font-family="JetBrains Mono" font-size="12" font-weight="700" fill="#e2e8f0" stroke="rgba(10,14,23,0.92)" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke">${startTxt}</text>
+    <text x="${(endX - 15).toFixed(1)}"  y="${endLabelY.toFixed(1)}"   text-anchor="end"   font-family="JetBrains Mono" font-size="12" font-weight="700" fill="#e2e8f0" stroke="rgba(10,14,23,0.92)" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke">${endTxt}</text>
+  `;
+
+  // X-axis: year labels under each bar. Show every label when there's room
+  // (≤ ~10 years), otherwise sample every Nth label and always include the
+  // last so the right edge is anchored.
+  const renderableYears = yearGroups.filter((g, i) => !(i === 0 && g.startIdx === g.endIdx));
+  const xAxisLabelStep  = Math.max(1, Math.ceil(renderableYears.length / 10));
+  const xAxisY          = lineBot + 13;
+  let xAxis = '';
+  renderableYears.forEach((g, i) => {
+    const isLast = (i === renderableYears.length - 1);
+    if (i % xAxisLabelStep !== 0 && !isLast) return;
+    const cx = (xAt(g.startIdx) + xAt(g.endIdx)) / 2;
+    xAxis += `<text x="${cx.toFixed(1)}" y="${xAxisY.toFixed(1)}" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(148,163,184,0.85)" stroke="rgba(10,14,23,0.85)" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke">${g.year}</text>`;
+  });
+  // Subtle x-axis baseline.
+  const xAxisLine = `<line x1="${padX}" y1="${(lineBot + 1).toFixed(1)}" x2="${(width - padX).toFixed(1)}" y2="${(lineBot + 1).toFixed(1)}" stroke="rgba(148,163,184,0.18)" stroke-width="0.5"/>`;
+
+  return `<svg class="tt-line-chart" width="${width}" height="${height}" style="display:block;margin:6px 0">
+    ${bars}
+    ${baseline}
+    <path d="${area}" fill="rgba(34,211,238,0.18)"/>
+    <path d="${line}" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
+    ${barLabels}
+    ${endpoints}
+    ${xAxisLine}
+    ${xAxis}
+  </svg>`;
+}
 
 function getSpiralSim(initial, monthly, rate, annualRaise, opts) {
   const key = JSON.stringify({
@@ -661,6 +934,18 @@ function renderSpiralChart(sim) {
   if (!grid) return;
   if (typeof d3 === 'undefined') {
     grid.innerHTML = '<div class="spiral-loading">D3 still loading — try again in a moment.</div>';
+    return;
+  }
+
+  // Fast path: if the underlying sim, strategy, and DOM SVG are still the
+  // same as the last render, ONLY the threshold can have changed. In that
+  // case we just repaint the bar fills against the new threshold — no rebuild,
+  // no resampling, no DOM churn. Makes the slider feel instant.
+  const renderKey  = _spiralSimKey + '|' + analyticsStrategy;
+  const stillMounted = grid.querySelector('.spiral-svg');
+  if (renderKey === _spiralRenderKey && _spiralBarsSel && stillMounted) {
+    const t = analyticsCustomGrowthPct;
+    _spiralBarsSel.style('fill', d => d.pct >= t ? '#22c55e' : '#ef4444');
     return;
   }
 
@@ -848,7 +1133,7 @@ function renderSpiralChart(sim) {
   const tooltip = document.getElementById('heatmap-tooltip');
   if (tooltip) {
     bars
-      .style('cursor', 'crosshair')
+      .style('cursor', 'pointer')
       .on('mouseenter', function (event, d) { showSpiralTooltip(tooltip, event, d, threshold); })
       .on('mousemove',  function (event)    { if (!tooltip.hasAttribute('hidden')) positionSpiralTooltip(tooltip, event); })
       .on('mouseleave', function ()         { tooltip.setAttribute('hidden', ''); });
@@ -904,6 +1189,12 @@ function renderSpiralChart(sim) {
       return `rotate(${flip ? d.a + 180 : d.a},${d.tx},${d.ty})`;
     })
     .text(d => d.year);
+
+  // Cache the rendered chart so the next slider-only change can repaint
+  // colors instead of rebuilding from scratch.
+  _spiralRenderKey = renderKey;
+  _spiralBarsSel   = bars;
+  _spiralPoints    = points;
 }
 
 async function buildHeatmap() {
@@ -933,19 +1224,24 @@ async function buildHeatmap() {
   if (titleEl) titleEl.textContent = (STRATEGY_LABELS[analyticsStrategy] || 'Adaptive') + ' — Final Value';
   const subEl = document.querySelector('.analytics-chart-sub');
   if (subEl) {
-    let bLabel, modeNote;
-    if (analyticsBaseline === 'custom') {
-      bLabel = `Custom Target (${fmtFull(analyticsCustomTarget)})`;
-      modeNote = 'green = hit the goal, red = below it';
-    } else if (analyticsBaseline === 'custom-pct') {
+    if (analyticsBaseline === 'custom-pct') {
+      // Spiral mode: no rows/columns; each bar represents one calendar year
+      // of growth in the strategy's portfolio value.
+      const sign   = analyticsCustomGrowthPct >= 0 ? '+' : '';
       const pctTxt = (analyticsCustomGrowthPct % 1 === 0 ? analyticsCustomGrowthPct.toFixed(0) : analyticsCustomGrowthPct.toFixed(1));
-      bLabel = `+${pctTxt}% per year`;
-      modeNote = 'green = grew at least that much from the previous-year cell, red = didn\'t';
+      const bLabel = `${sign}${pctTxt}% per year`;
+      subEl.innerHTML = `each bar = one calendar year · oldest at center, latest at outer edge · bar color vs <strong>${bLabel}</strong> (green = grew at least that much, red = didn\'t)`;
     } else {
-      bLabel = BASELINE_LABELS[analyticsBaseline] || 'baseline';
-      modeNote = '1× = match, anchored at slate midpoint';
+      let bLabel, modeNote;
+      if (analyticsBaseline === 'custom') {
+        bLabel   = `Custom Target (${fmtFull(analyticsCustomTarget)})`;
+        modeNote = 'green = hit the goal, red = below it';
+      } else {
+        bLabel   = BASELINE_LABELS[analyticsBaseline] || 'baseline';
+        modeNote = '1× = match, anchored at slate midpoint';
+      }
+      subEl.innerHTML = `rows: year you started investing &nbsp;·&nbsp; columns: N years later &nbsp;·&nbsp; cell color vs <strong>${bLabel}</strong> (${modeNote})`;
     }
-    subEl.innerHTML = `rows: year you started investing &nbsp;·&nbsp; columns: N years later &nbsp;·&nbsp; cell color vs <strong>${bLabel}</strong> (${modeNote})`;
   }
 
   // Spiral mode: run a single full-history simulate() with the user's
@@ -1017,6 +1313,10 @@ async function buildHeatmap() {
   }
   grid.classList.remove('loading');
   grid.innerHTML = '<table class="heatmap-table"><thead>' + headerHTML + '</thead><tbody>' + bodyParts.join('') + '</tbody></table>';
+  // Heatmap-mode rebuild wipes the spiral SVG → invalidate its cache.
+  _spiralRenderKey = null;
+  _spiralBarsSel   = null;
+  _spiralPoints    = null;
   const cellRefs = new Map();
   grid.querySelectorAll('td.heatmap-cell[data-yp]').forEach(td => cellRefs.set(td.dataset.yp, td));
 
