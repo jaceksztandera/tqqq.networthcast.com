@@ -2,7 +2,7 @@
 
 Interactive simulator for the 9Sig strategy on synthetic TQQQ (3x QQQ), with comparisons to buy-and-hold TQQQ, QQQ, and SPY.
 
-Live: https://9sig.networthcast.com
+Live: https://tqqq.networthcast.com
 
 ## Updating price data
 
