@@ -66,6 +66,32 @@ function getMonth(dateStr) {
 
 let quarterlyData, monthlyData; // populated by init()
 let dailyDateToIdx; // populated by init()
+// monthlyByQuarter[qi] = indices into monthlyData whose date falls in
+// (quarterlyData[qi-1].date, quarterlyData[qi].date]. Replaces simulate()'s
+// hot per-quarter scan of all of monthlyData with an O(1) lookup of the 2-3
+// monthly entries that actually matter for that quarter. Computed once after
+// data load. Only used when simulate runs against the default quarterlyData;
+// envelope-shifted runs fall back to the linear scan.
+let monthlyByQuarter = null;
+
+function precomputeMonthlyByQuarter() {
+  if (!quarterlyData || !monthlyData) { monthlyByQuarter = null; return; }
+  const out = new Array(quarterlyData.length);
+  out[0] = [];
+  let mIdx = 0;
+  // Skip months at-or-before the first quarter (they don't belong to any window).
+  while (mIdx < monthlyData.length && monthlyData[mIdx][0] <= quarterlyData[0][0]) mIdx++;
+  for (let qi = 1; qi < quarterlyData.length; qi++) {
+    const curDate = quarterlyData[qi][0];
+    const list = [];
+    while (mIdx < monthlyData.length && monthlyData[mIdx][0] <= curDate) {
+      list.push(mIdx);
+      mIdx++;
+    }
+    out[qi] = list;
+  }
+  monthlyByQuarter = out;
+}
 let shiftedQuarterlyCache = []; // populated by init() — array of qData arrays, parallel to envelopeShiftDays
 let envelopeShiftDays    = []; // populated by init() — trading-day shift for each cache slot
 let envelopeShiftCount   = 0;  // populated by init() — = envelopeShiftDays.length

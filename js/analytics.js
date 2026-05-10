@@ -68,6 +68,72 @@ function baselineFinalValue(sim, key) {
   }
 }
 
+// Same as baselineFinalValue but reads the value at a specific quarter
+// offset within a sim (used by the heatmap's per-row optimization where one
+// simulate() covers many cells, each at a different exit quarter).
+function baselineValueAtOffset(sim, key, offset) {
+  switch (key) {
+    case 'custom':     return analyticsCustomTarget;
+    case 'custom-pct': return 0;
+    case '9sig':       { const a = sim.log;           return a && a[offset] ? a[offset].total : 0; }
+    case 'bh-tqqq':    { const a = sim.bhPoints;      return a && a[offset] ? a[offset].value : 0; }
+    case 'bh-qqq':     { const a = sim.qqqPoints;     return a && a[offset] ? a[offset].value : 0; }
+    case 'bh-spy':     { const a = sim.spyPoints;     return a && a[offset] ? a[offset].value : 0; }
+    case 'adaptive':   { const a = sim.adaptivePoints;return a && a[offset] ? a[offset].value : 0; }
+    case 'compounded':
+    default:           { const a = sim.log;           return a && a[offset] ? a[offset].investedCompounded : 0; }
+  }
+}
+
+// Same as strategyFinalValue but reads the value at a specific quarter
+// offset within a sim. Mirrors the per-cell sim's "final" semantics for the
+// heatmap's row-shared sim.
+function strategyValueAtOffset(sim, strat, offset) {
+  switch (strat) {
+    case '9sig':     { const a = sim.log;            return a && a[offset] ? a[offset].total : 0; }
+    case 'bh-tqqq':  { const a = sim.bhPoints;       return a && a[offset] ? a[offset].value : 0; }
+    case 'bh-qqq':   { const a = sim.qqqPoints;      return a && a[offset] ? a[offset].value : 0; }
+    case 'bh-spy':   { const a = sim.spyPoints;      return a && a[offset] ? a[offset].value : 0; }
+    case 'adaptive':
+    default:         { const a = sim.adaptivePoints; return a && a[offset] ? a[offset].value : 0; }
+  }
+}
+
+// For a row-shared sim, return the strategy's full per-quarter value array
+// (so we can compute a max-drawdown prefix once and answer every cell's
+// drawdown in O(1)).
+function strategyValueArray(sim, strat) {
+  switch (strat) {
+    case '9sig':     return sim.log           ? sim.log.map(l => l.total)            : [];
+    case 'bh-tqqq':  return sim.bhPoints      ? sim.bhPoints.map(p => p.value)       : [];
+    case 'bh-qqq':   return sim.qqqPoints     ? sim.qqqPoints.map(p => p.value)      : [];
+    case 'bh-spy':   return sim.spyPoints     ? sim.spyPoints.map(p => p.value)      : [];
+    case 'adaptive':
+    default:         return sim.adaptivePoints? sim.adaptivePoints.map(p => p.value) : [];
+  }
+}
+
+// Prefix max-drawdown: out[i] = peak-to-trough decline observed across
+// series[0..i]. Lets the heatmap answer maxDD per cell in O(1) after one
+// linear pass over the row's full strategy series.
+function computeMaxDDPrefix(series) {
+  const out = new Array(series.length);
+  let peak = -Infinity;
+  let maxDD = 0;
+  for (let i = 0; i < series.length; i++) {
+    const v = series[i];
+    if (Number.isFinite(v)) {
+      if (v > peak) peak = v;
+      if (peak > 0) {
+        const dd = (peak - v) / peak;
+        if (dd > maxDD) maxDD = dd;
+      }
+    }
+    out[i] = maxDD;
+  }
+  return out;
+}
+
 // Pull the chosen strategy's final value out of a simulate() result.
 function strategyFinalValue(sim, strat) {
   switch (strat) {
@@ -1374,23 +1440,41 @@ async function buildHeatmap() {
   const lookup = new Map();
   for (const c of cells) lookup.set(c.year + ':' + c.period, c);
 
-  // Render the empty skeleton up-front so cells fill in live as sims complete.
-  // data-r / data-c on every cell + corresponding header drives the row+column
-  // hover highlight without per-render listener wiring.
-  const headerHTML = '<tr><th></th>' + periods.map(p => `<th data-c="${p}">${p}y</th>`).join('') + '</tr>';
-  const bodyParts = [];
-  for (let sy = maxYear; sy >= minYear; sy--) {
-    bodyParts.push(`<tr><th data-r="${sy}">${sy}</th>`);
-    for (const p of periods) {
-      const c = lookup.get(sy + ':' + p);
-      bodyParts.push(c
-        ? `<td class="heatmap-cell" data-yp="${sy}:${p}" data-r="${sy}" data-c="${p}"></td>`
-        : `<td class="heatmap-cell empty" data-r="${sy}" data-c="${p}"></td>`);
+  // Reuse the existing skeleton if its structure matches the expected cell
+  // set — then we don't blow away the previous run's values + colors when
+  // the user changes a parameter. The new build overwrites each cell
+  // in-place as its sim completes; until then the old colors stay visible.
+  const expectedYps = new Set();
+  for (const c of cells) expectedYps.add(c.year + ':' + c.period);
+  const existingTable = grid.querySelector('table.heatmap-table');
+  let canReuse = !!existingTable;
+  if (canReuse) {
+    const existingTds = existingTable.querySelectorAll('td.heatmap-cell[data-yp]');
+    if (existingTds.length !== expectedYps.size) {
+      canReuse = false;
+    } else {
+      for (const td of existingTds) {
+        if (!expectedYps.has(td.dataset.yp)) { canReuse = false; break; }
+      }
     }
-    bodyParts.push('</tr>');
+  }
+  if (!canReuse) {
+    // First open (or structure changed) → render empty skeleton.
+    const headerHTML = '<tr><th></th>' + periods.map(p => `<th data-c="${p}">${p}y</th>`).join('') + '</tr>';
+    const bodyParts = [];
+    for (let sy = maxYear; sy >= minYear; sy--) {
+      bodyParts.push(`<tr><th data-r="${sy}">${sy}</th>`);
+      for (const p of periods) {
+        const c = lookup.get(sy + ':' + p);
+        bodyParts.push(c
+          ? `<td class="heatmap-cell" data-yp="${sy}:${p}" data-r="${sy}" data-c="${p}"></td>`
+          : `<td class="heatmap-cell empty" data-r="${sy}" data-c="${p}"></td>`);
+      }
+      bodyParts.push('</tr>');
+    }
+    grid.innerHTML = '<table class="heatmap-table"><thead>' + headerHTML + '</thead><tbody>' + bodyParts.join('') + '</tbody></table>';
   }
   grid.classList.remove('loading');
-  grid.innerHTML = '<table class="heatmap-table"><thead>' + headerHTML + '</thead><tbody>' + bodyParts.join('') + '</tbody></table>';
   // Heatmap-mode rebuild wipes the spiral SVG → invalidate its cache.
   _spiralRenderKey = null;
   _spiralBarsSel   = null;
@@ -1403,35 +1487,57 @@ async function buildHeatmap() {
   progBar.style.width = '0%';
   progText.textContent = '0 / ' + cells.length;
 
-  // Run simulations, populating each cell's text immediately. Yield + update
-  // progress every CHUNK cells. Abort if a newer build started.
-  const CHUNK = 30;
+  // Per-row optimization: every cell with the same start year shares the
+  // same entryIdx, and simulate() is forward-only — so one sim from
+  // entryIdx → max(exitIdx in row) gives every shorter cell's answer too.
+  // Cuts ~2640 sims down to ~88 sims, with each cell sampled at the right
+  // quarter offset. Plus simulate's monthly-contribution loops now use the
+  // O(1) monthlyByQuarter index, so each sim is also faster.
+  const cellsByRow = new Map();
+  for (const c of cells) {
+    let arr = cellsByRow.get(c.year);
+    if (!arr) { arr = []; cellsByRow.set(c.year, arr); }
+    arr.push(c);
+  }
+
   const strat = analyticsStrategy;
-  for (let i = 0; i < cells.length; i++) {
-    const c = cells[i];
-    const sim = simulate(initial, monthly, rate, c.entryIdx, c.exitIdx, annualRaise, opts);
-    c.value = strategyFinalValue(sim, strat);
-    // Divisor for the diverging color scale — chosen via the baseline dropdown.
-    // Default is "Compounded Cash" (the same line plotted as "Invested
-    // Compounded" on the main chart). Other options compare against B&H SPY,
-    // QQQ, TQQQ, 9sig, or adaptive.
-    const baseline = baselineFinalValue(sim, analyticsBaseline);
-    c.derived = baseline > 0 && c.value > 0 ? c.value / baseline : 0;
-    c.maxDD = computeMaxDrawdown(strategySeries(sim, strat));
-    const td = cellRefs.get(c.year + ':' + c.period);
-    if (td) {
-      const endYear = c.year + c.period - 1;
-      td.innerHTML = `<span class="cell-val">${fmt3sig(c.value)}</span><span class="cell-year">${endYear}</span>`;
-      td.dataset.value = String(c.value);
-      td.dataset.derived = String(c.derived);
-      td.dataset.endYear = String(endYear);
-      td.dataset.maxDd = String(c.maxDD);
+  let processed = 0;
+  let rowsProcessed = 0;
+  const totalRows = cellsByRow.size;
+  for (const [, rowCells] of cellsByRow) {
+    const entryIdx = rowCells[0].entryIdx;
+    let maxExitIdx = entryIdx;
+    for (const c of rowCells) if (c.exitIdx > maxExitIdx) maxExitIdx = c.exitIdx;
+
+    const sim = simulate(initial, monthly, rate, entryIdx, maxExitIdx, annualRaise, opts);
+    const stratSeries = strategyValueArray(sim, strat);
+    const ddPrefix    = computeMaxDDPrefix(stratSeries);
+
+    for (const c of rowCells) {
+      const offset = c.exitIdx - entryIdx;
+      c.value   = strategyValueAtOffset(sim, strat, offset);
+      const baseline = baselineValueAtOffset(sim, analyticsBaseline, offset);
+      c.derived = baseline > 0 && c.value > 0 ? c.value / baseline : 0;
+      c.maxDD   = ddPrefix[offset] || 0;
+
+      const td = cellRefs.get(c.year + ':' + c.period);
+      if (td) {
+        const endYear = c.year + c.period - 1;
+        td.innerHTML = `<span class="cell-val">${fmt3sig(c.value)}</span><span class="cell-year">${endYear}</span>`;
+        td.dataset.value   = String(c.value);
+        td.dataset.derived = String(c.derived);
+        td.dataset.endYear = String(endYear);
+        td.dataset.maxDd   = String(c.maxDD);
+      }
+      processed++;
     }
 
-    if ((i + 1) % CHUNK === 0 || i === cells.length - 1) {
-      const pct = ((i + 1) / cells.length) * 100;
-      progBar.style.width = pct.toFixed(1) + '%';
-      progText.textContent = (i + 1) + ' / ' + cells.length;
+    rowsProcessed++;
+    // Yield once per row instead of per cell — far fewer rAF round-trips
+    // than the old chunked-by-30-cells approach.
+    progBar.style.width = ((processed / cells.length) * 100).toFixed(1) + '%';
+    progText.textContent = processed + ' / ' + cells.length;
+    if (rowsProcessed % 8 === 0 || rowsProcessed === totalRows) {
       await new Promise(r => requestAnimationFrame(r));
       if (epoch !== analyticsBuildEpoch) return;
     }

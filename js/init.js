@@ -11,6 +11,9 @@
   quarterlyData = lastOfPeriod(daily, getQuarter).map(d => [d.date, d.tqqq, d.qqq, d.spy]);
   monthlyData = lastOfPeriod(daily, getMonth).map(d => [d.date, d.tqqq, d.qqq, d.spy]);
   dailyDateToIdx = new Map(daily.map((d, i) => [d.date, i]));
+  // Pre-index monthly entries per quarter so simulate()'s hot inner loops
+  // become O(2-3) lookups instead of O(monthlyData.length) scans.
+  precomputeMonthlyByQuarter();
   envelopeShiftDays  = buildEnvelopeShifts();
   envelopeShiftCount = envelopeShiftDays.length;
   shiftedQuarterlyCache = envelopeShiftDays.map(getShiftedQuarterly);

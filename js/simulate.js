@@ -63,6 +63,10 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const switchToAllIn = opts.switchToAllIn != null ? opts.switchToAllIn : 100;
   const yearsBack     = opts.yearsBack     != null ? opts.yearsBack     : 10;
 
+  // Fast path for monthly contribution slicing — only when running against
+  // the default quarterlyData (envelope-shifted qData uses a different date
+  // alignment, so falls back to the linear scan).
+  const fastMonthly = (qData === quarterlyData) && monthlyByQuarter;
   const qSlice = qData.slice(entryIdx, exitIdx + 1);
   if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], totalContributed: initial };
 
@@ -94,16 +98,26 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
 
       // Add monthly contributions: 100% goes to cash, signal line rises by 50% of new cash
       let newCashThisQ = 0;
-      for (const [mDate] of monthlyData) {
-        if (mDate > prevQDate && mDate <= qDate) {
+      if (fastMonthly) {
+        const monthsInQ = monthlyByQuarter[entryIdx + qi];
+        for (let mi = 0; mi < monthsInQ.length; mi++) {
           cash += currentMonthly;
           totalInvested += currentMonthly;
           newCashThisQ += currentMonthly;
-          // Apply monthly interest on cash
           cash *= (1 + monthlyRate);
-          // Compound invested baseline
           investedCompounded *= (1 + monthlyRate);
           investedCompounded += currentMonthly;
+        }
+      } else {
+        for (const [mDate] of monthlyData) {
+          if (mDate > prevQDate && mDate <= qDate) {
+            cash += currentMonthly;
+            totalInvested += currentMonthly;
+            newCashThisQ += currentMonthly;
+            cash *= (1 + monthlyRate);
+            investedCompounded *= (1 + monthlyRate);
+            investedCompounded += currentMonthly;
+          }
         }
       }
 
@@ -203,9 +217,16 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     if (qi > 0) {
       const yr = parseInt(qDate.substring(0, 4));
       const bhMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
-      for (const [mDate, mPrice] of monthlyData) {
-        if (mDate > bhPrevQ && mDate <= qDate) {
-          bhShares += bhMonthly / mPrice;
+      if (fastMonthly) {
+        const monthsInQ = monthlyByQuarter[entryIdx + qi];
+        for (let k = 0; k < monthsInQ.length; k++) {
+          bhShares += bhMonthly / monthlyData[monthsInQ[k]][1];
+        }
+      } else {
+        for (const [mDate, mPrice] of monthlyData) {
+          if (mDate > bhPrevQ && mDate <= qDate) {
+            bhShares += bhMonthly / mPrice;
+          }
         }
       }
     }
@@ -223,9 +244,16 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     if (qi > 0) {
       const yr = parseInt(qDate.substring(0, 4));
       const qqqMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
-      for (const [mDate, , mQqqPrice] of monthlyData) {
-        if (mDate > qqqPrevQ && mDate <= qDate) {
-          qqqShares += qqqMonthly / mQqqPrice;
+      if (fastMonthly) {
+        const monthsInQ = monthlyByQuarter[entryIdx + qi];
+        for (let k = 0; k < monthsInQ.length; k++) {
+          qqqShares += qqqMonthly / monthlyData[monthsInQ[k]][2];
+        }
+      } else {
+        for (const [mDate, , mQqqPrice] of monthlyData) {
+          if (mDate > qqqPrevQ && mDate <= qDate) {
+            qqqShares += qqqMonthly / mQqqPrice;
+          }
         }
       }
     }
@@ -243,9 +271,17 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     if (qi > 0 && spyPrice) {
       const yr = parseInt(qDate.substring(0, 4));
       const spyMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
-      for (const [mDate, , , mSpyPrice] of monthlyData) {
-        if (mDate > spyPrevQ && mDate <= qDate && mSpyPrice) {
-          spyShares += spyMonthly / mSpyPrice;
+      if (fastMonthly) {
+        const monthsInQ = monthlyByQuarter[entryIdx + qi];
+        for (let k = 0; k < monthsInQ.length; k++) {
+          const mSpyPrice = monthlyData[monthsInQ[k]][3];
+          if (mSpyPrice) spyShares += spyMonthly / mSpyPrice;
+        }
+      } else {
+        for (const [mDate, , , mSpyPrice] of monthlyData) {
+          if (mDate > spyPrevQ && mDate <= qDate && mSpyPrice) {
+            spyShares += spyMonthly / mSpyPrice;
+          }
         }
       }
     }
@@ -281,14 +317,28 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     if (qi > 0) {
       const yr = parseInt(qDate.substring(0, 4));
       const aMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
-      for (const [mDate, mPrice] of monthlyData) {
-        if (mDate > aPrevQ && mDate <= qDate) {
+      if (fastMonthly) {
+        const monthsInQ = monthlyByQuarter[entryIdx + qi];
+        for (let k = 0; k < monthsInQ.length; k++) {
+          const mPrice = monthlyData[monthsInQ[k]][1];
           if (aState === 'all-in') {
             aShares += aMonthly / mPrice;
           } else {
             aCash += aMonthly;
             aCash *= (1 + monthlyRate);
             aNewCashThisQ += aMonthly;
+          }
+        }
+      } else {
+        for (const [mDate, mPrice] of monthlyData) {
+          if (mDate > aPrevQ && mDate <= qDate) {
+            if (aState === 'all-in') {
+              aShares += aMonthly / mPrice;
+            } else {
+              aCash += aMonthly;
+              aCash *= (1 + monthlyRate);
+              aNewCashThisQ += aMonthly;
+            }
           }
         }
       }

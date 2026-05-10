@@ -544,7 +544,13 @@
     color: var(--text-muted);
     font-family: 'JetBrains Mono', monospace;
   }
-  .analytics-progress[hidden] { display: none; }
+  /* Reserve the row's layout space whether or not it's visible — using
+     `visibility: hidden` instead of `display: none` keeps the heatmap below
+     from jumping up/down each time the progress strip toggles. */
+  .analytics-progress[hidden] {
+    display: flex;
+    visibility: hidden;
+  }
   .analytics-progress-track {
     flex: 1;
     height: 3px;
