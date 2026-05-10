@@ -26,14 +26,20 @@
 
   .header {
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 18px;
     position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
   }
 
   .header h1 {
-    font-size: 28px;
+    font-size: 20px;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.3px;
+    margin: 0;
+    line-height: 1.2;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -41,8 +47,8 @@
 
   .header p {
     color: var(--text-muted);
-    margin-top: 6px;
-    font-size: 14px;
+    margin: 0;
+    font-size: 12px;
   }
 
   .layout {
@@ -148,33 +154,8 @@
   #advanced-section { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
   #advanced-section.open { max-height: 1000px; }
 
-  #adaptive-section { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
-  #adaptive-section.open { max-height: 280px; }
-
   .section-toggle-row {
-    display: flex;
-    gap: 8px;
     margin-bottom: 18px;
-  }
-  .section-toggle-row > button {
-    flex: 1;
-  }
-
-  #adaptive-toggle {
-    background: none;
-    border: 1px dashed var(--border);
-    color: var(--text-muted);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 11px;
-    font-weight: 500;
-    padding: 6px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  #adaptive-toggle:hover {
-    border-color: var(--accent2);
-    color: var(--accent2);
   }
 
   .adaptive-line {
@@ -204,6 +185,7 @@
   .inline-select:focus { outline: none; border-color: var(--accent); }
 
   #advanced-toggle {
+    width: 100%;
     background: none;
     border: 1px dashed var(--border);
     color: var(--text-muted);
@@ -755,6 +737,10 @@
   }
   .heatmap-tooltip[hidden] { display: none; }
   .heatmap-tooltip .tt-period {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
@@ -831,26 +817,15 @@
     color: var(--text);
     white-space: nowrap;
   }
-  .heatmap-tooltip .tt-foot {
-    margin-top: 8px;
-    padding-top: 7px;
-    border-top: 1px solid rgba(100, 116, 139, 0.2);
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    font-size: 12px;
-  }
-  .heatmap-tooltip .tt-foot > span:first-child {
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    font-weight: 600;
-  }
   .heatmap-tooltip .tt-dd {
     font-family: 'JetBrains Mono', monospace;
     font-weight: 600;
     color: var(--red);
+    /* Reset the period-row's uppercase + letter-spacing so the
+       drawdown number reads as a value, not a heading. */
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
   }
 
   .dual-range {
@@ -961,6 +936,323 @@
   .positive { color: var(--green); }
   .negative { color: var(--red); }
   .neutral { color: var(--accent); }
+
+  /* Compact strategy legend strip above the chart. Each chip combines
+     visibility toggle (eye), color dot, name, and annualized CAGR. */
+  .chart-legend {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .legend-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: rgba(30, 42, 63, 0.45);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: 500 11px 'DM Sans', sans-serif;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    user-select: none;
+    /* Without min-width:0 the long-name chips would refuse to shrink and
+       blow out the column. */
+    min-width: 0;
+  }
+  /* Push CAGR + more-button to the right edge so the column lines up
+     regardless of strategy-name length. */
+  .legend-chip .legend-name {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .legend-chip:hover {
+    background: rgba(30, 42, 63, 0.85);
+    border-color: rgba(34, 211, 238, 0.4);
+  }
+  .legend-chip .legend-eye {
+    width: 12px;
+    height: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .legend-chip:hover .legend-eye { color: var(--accent); }
+  .legend-chip .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-chip .legend-name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Two-line metrics column inside each chip: CAGR on top, max drawdown
+     below. Each row is "label  value" so the metric is unambiguous at
+     a glance. */
+  .legend-chip .legend-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-left: auto;
+    align-items: flex-end;
+  }
+  .legend-chip .legend-metric-row {
+    display: flex;
+    gap: 4px;
+    align-items: baseline;
+    line-height: 1.1;
+  }
+  .legend-chip .legend-metric-label {
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+  .legend-chip .legend-metric-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 10px;
+  }
+  .legend-chip .legend-metric-value.positive { color: var(--green); }
+  .legend-chip .legend-metric-value.negative { color: var(--red); }
+  .legend-chip.legend-hidden {
+    opacity: 0.35;
+    background: rgba(30, 42, 63, 0.2);
+  }
+  .legend-chip.legend-hidden .legend-name {
+    text-decoration: line-through;
+    text-decoration-color: rgba(148, 163, 184, 0.6);
+  }
+  .legend-chip.legend-hidden .legend-metric-value {
+    color: var(--text-muted) !important;
+  }
+  /* "More" button on each chip — opens the side panel with details. */
+  .legend-chip .legend-more {
+    margin-left: 4px;
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    line-height: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+  .legend-chip .legend-more:hover {
+    background: rgba(34, 211, 238, 0.18);
+    color: var(--accent);
+  }
+  .legend-chip.legend-hidden .legend-more { color: var(--text-muted); }
+
+  /* Strategy details side panel — slides in from the left when a chip's
+     more-button is clicked. */
+  .strategy-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    pointer-events: none;
+    visibility: hidden;
+  }
+  .strategy-panel.is-open {
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .strategy-panel-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 6, 18, 0.45);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .strategy-panel.is-open .strategy-panel-backdrop {
+    opacity: 1;
+  }
+  .strategy-panel-content {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 360px;
+    max-width: 92vw;
+    height: 100vh;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    box-shadow: 4px 0 28px rgba(0, 0, 0, 0.55);
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    /* Children must respect the narrow width — without min-width:0 a wide
+       <table> inside the body would stretch the flex column. */
+    min-width: 0;
+  }
+  .strategy-panel.is-open .strategy-panel-content {
+    transform: translateX(0);
+  }
+  .strategy-panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .strategy-panel-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text);
+    margin: 0;
+  }
+  .strategy-panel-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .strategy-panel-close:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: rgba(34, 211, 238, 0.08);
+  }
+  .strategy-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+    /* Without min-width:0 a wide table would stretch this flex item past
+       the panel and force a horizontal scroll on the whole panel. */
+    min-width: 0;
+    /* Custom scrollbar — same accent treatment as the analytics heatmap. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100,116,139,0.5) transparent;
+  }
+  .strategy-panel-body::-webkit-scrollbar { width: 8px; }
+  .strategy-panel-body::-webkit-scrollbar-track { background: transparent; }
+  .strategy-panel-body::-webkit-scrollbar-thumb {
+    background: rgba(100,116,139,0.4);
+    border-radius: 4px;
+  }
+  .strategy-panel-body::-webkit-scrollbar-thumb:hover { background: rgba(34,211,238,0.6); }
+  .strategy-panel-body::-webkit-scrollbar-corner { background: transparent; }
+  .strategy-panel-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  /* Nested chip group inside the side panel — wraps like the main legend. */
+  .strategy-panel-body .legend-chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* 4-stat grid (CAGR / Start / End / Max DD) shown for the main strategy.
+     2×2 layout because the panel is narrow — fits dollar values comfortably. */
+  .strategy-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin: 12px 0 20px;
+  }
+  .strategy-stat {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .strategy-stat-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .strategy-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .strategy-stat-value.positive { color: var(--green); }
+  .strategy-stat-value.negative { color: var(--red); }
+  /* 9sig rules block inside the panel — same visual feel as the old
+     .info-note that lived in the parameters panel. */
+  .strategy-panel-body .strategy-rules {
+    background: var(--surface2);
+    border-left: 3px solid var(--accent);
+    padding: 12px 14px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  /* Quarterly rebalance log table inside the panel. */
+  .strategy-panel-body .quarter-table-wrap {
+    margin-top: 8px;
+    max-height: 360px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    /* Pin to the panel's content width — the wide table scrolls horizontally
+       inside this wrap rather than pushing the panel wider. */
+    width: 100%;
+    max-width: 100%;
+  }
+  .strategy-panel-body .quarter-table-wrap table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .strategy-panel-body .quarter-table-wrap th {
+    position: sticky;
+    top: 0;
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    text-align: right;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .strategy-panel-body .quarter-table-wrap th:first-child { text-align: left; }
+  .strategy-panel-body .quarter-table-wrap td {
+    padding: 4px 8px;
+    text-align: right;
+    color: var(--text);
+    border-bottom: 1px solid rgba(30, 42, 63, 0.4);
+    white-space: nowrap;
+  }
+  .strategy-panel-body .quarter-table-wrap td:first-child { text-align: left; color: var(--text-muted); }
+  .strategy-panel-body .quarter-table-wrap td.action-sell { color: var(--red); }
+  .strategy-panel-body .quarter-table-wrap td.action-buy  { color: var(--green); }
+  .strategy-panel-body .quarter-table-wrap td.action-hold { color: var(--text-muted); }
 
   .chart-container {
     position: relative;
@@ -1154,10 +1446,10 @@
     align-items: center;
     gap: 5px;
     padding: 6px 14px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
+    background: rgba(34, 211, 238, 0.12);
+    border: 1px solid var(--accent);
     border-radius: 8px;
-    color: var(--text-muted);
+    color: var(--accent);
     font-family: 'DM Sans', sans-serif;
     font-size: 12px;
     font-weight: 500;

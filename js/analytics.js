@@ -405,18 +405,12 @@ document.addEventListener('change', (e) => {
     // Run (or reuse cached) simulate() for this exact (startYear, period)
     // range so we can render the same line chart that spiral mode uses.
     const cellSim = getCellSim(startYear, period);
-    let lineChart = '';
-    if (cellSim) {
-      const series = strategyDateValues(cellSim, analyticsStrategy);
-      if (series.length >= 2) lineChart = buildTooltipLineChart(series);
-    }
 
-    // Baseline label + ratio for the footer.
+    // For custom-pct, the baseline depends on the previous cell's value;
+    // for everything else, the cell's `derived` field already encodes the
+    // baseline → strategy ratio so we can recover the baseline directly.
     let baselineVal = derived > 0 ? value / derived : 0;
-    let baseLabel;
-    if (analyticsBaseline === 'custom') {
-      baseLabel = `Target ${fmtFull(analyticsCustomTarget)}`;
-    } else if (analyticsBaseline === 'custom-pct') {
+    if (analyticsBaseline === 'custom-pct') {
       const prevPeriod = period - 1;
       let prevValue = +(sliderToInitial(+document.getElementById('slider-initial').value));
       if (prevPeriod > 0) {
@@ -424,23 +418,29 @@ document.addEventListener('change', (e) => {
         if (prevTd && prevTd.dataset.value) prevValue = +prevTd.dataset.value;
       }
       baselineVal = prevValue * (1 + analyticsCustomGrowthPct / 100);
-      const sign   = analyticsCustomGrowthPct >= 0 ? '+' : '';
-      const pctTxt = (analyticsCustomGrowthPct % 1 === 0 ? analyticsCustomGrowthPct.toFixed(0) : analyticsCustomGrowthPct.toFixed(1));
-      baseLabel = `${sign}${pctTxt}% target`;
-    } else {
-      baseLabel = BASELINE_LABELS[analyticsBaseline] || 'Baseline';
     }
-    const ratioTxt = baselineVal > 0 ? (value / baselineVal).toFixed(2) + '×' : '—';
-    const ddStr   = Number.isFinite(maxDD) && maxDD > 0 ? '−' + (maxDD * 100).toFixed(1) + '%' : '0.0%';
+
+    // Build the line chart, overlaying the baseline series so the user
+    // can see the comparison curve, not just the ratio number.
+    let lineChart = '';
+    if (cellSim) {
+      const series = strategyDateValues(cellSim, analyticsStrategy);
+      if (series.length >= 2) {
+        const baselineSeries = baselineDateValues(cellSim, analyticsBaseline, baselineVal, series);
+        lineChart = buildTooltipLineChart(series, {
+          baselineSeries: (baselineSeries && analyticsBaseline !== analyticsStrategy) ? baselineSeries : null,
+        });
+      }
+    }
+    const ddStr = Number.isFinite(maxDD) && maxDD > 0 ? '−' + (maxDD * 100).toFixed(1) + '%' : '0.0%';
 
     tooltip.innerHTML = `
-      <div class="tt-period">${stratLabel} &middot; INVESTED ${startYear} &middot; ${period}Y</div>
-      <div class="tt-strat">${fmtFull(Math.round(value))} <span style="color:var(--text-muted);font-size:11px;font-weight:500">(ended ${endYear})</span></div>
-      ${lineChart}
-      <div class="tt-foot">
-        <span>vs ${baseLabel}: <strong style="color:var(--text)">${ratioTxt}</strong></span>
+      <div class="tt-period">
+        <span>${stratLabel} &middot; INVESTED ${startYear} &middot; ${period}Y</span>
         <span class="tt-dd">DD ${ddStr}</span>
       </div>
+      <div class="tt-strat">${fmtFull(Math.round(value))} <span style="color:var(--text-muted);font-size:11px;font-weight:500">(ended ${endYear})</span></div>
+      ${lineChart}
     `;
   }
 
@@ -642,6 +642,31 @@ function strategyDateValues(sim, strat) {
   return raw;
 }
 
+// Quarterly (date, value) pairs for the heatmap's currently selected
+// baseline. Mirrors strategyDateValues for strategy-shaped baselines and
+// adds: 'compounded' (invested-cash growth), 'custom' (flat dollar target),
+// 'custom-pct' (per-cell flat target derived from prior cell × (1+pct)).
+function baselineDateValues(sim, key, cellBaselineVal, stratSeries) {
+  if (!sim) return [];
+  if (key === '9sig' || key === 'adaptive' || key === 'bh-tqqq' || key === 'bh-qqq' || key === 'bh-spy') {
+    return strategyDateValues(sim, key);
+  }
+  if (key === 'compounded') {
+    return sim.log ? sim.log.map(l => ({ date: l.date, value: l.investedCompounded })) : [];
+  }
+  // 'custom' (dollar target) or 'custom-pct' (cell-derived target). Both
+  // are rendered as a flat horizontal line at the target value.
+  if (key === 'custom' || key === 'custom-pct') {
+    const target = key === 'custom' ? analyticsCustomTarget : cellBaselineVal;
+    if (!Number.isFinite(target) || target <= 0 || !stratSeries || stratSeries.length < 2) return [];
+    return [
+      { date: stratSeries[0].date,                   value: target },
+      { date: stratSeries[stratSeries.length - 1].date, value: target },
+    ];
+  }
+  return [];
+}
+
 // Cache for the spiral's full-range simulate() result so that dragging the
 // percentage slider (which only changes the colour threshold, not the sim
 // inputs) doesn't trigger a fresh simulation each frame.
@@ -753,9 +778,15 @@ function getYearStartSim(startYear) {
 // (positive bars rise above the 0% baseline, negative drop below — bar
 // height proportional to |YoY %|). Bottom is the actual portfolio line
 // over time, with start/end value labels pinned at the line endpoints.
-function buildTooltipLineChart(series, width, height) {
-  width  = width  || 340;
-  height = height || 168; // larger to fit the bigger fonts
+function buildTooltipLineChart(series, opts) {
+  opts = opts || {};
+  const width  = opts.width  || 340;
+  const height = opts.height || 168; // larger to fit the bigger fonts
+  // Optional second series rendered as a dashed muted line — used by the
+  // heatmap tooltip to overlay the comparison baseline (e.g. compounded
+  // cash, B&H SPY, custom target) on top of the strategy line so the user
+  // can eyeball the relationship instead of just reading the ratio number.
+  const baselineSeries = opts.baselineSeries || null;
   if (!series || series.length < 2) return '';
 
   // Group series by year → {year, startIdx, endIdx, startVal, endVal, pct}.
@@ -847,11 +878,20 @@ function buildTooltipLineChart(series, width, height) {
   // 0% baseline through the bar strip.
   const baseline = `<line x1="${padX}" y1="${baselineY.toFixed(1)}" x2="${(width - padX).toFixed(1)}" y2="${baselineY.toFixed(1)}" stroke="rgba(255,255,255,0.18)" stroke-width="0.5"/>`;
 
-  // Line chart of portfolio value across the same x-range.
+  // Line chart of portfolio value across the same x-range. The y-scale
+  // expands to include the baseline series too so both lines fit cleanly.
   let mn = Infinity, mx = -Infinity;
   for (const p of series) {
     if (p.value < mn) mn = p.value;
     if (p.value > mx) mx = p.value;
+  }
+  if (baselineSeries && baselineSeries.length) {
+    for (const p of baselineSeries) {
+      if (Number.isFinite(p.value)) {
+        if (p.value < mn) mn = p.value;
+        if (p.value > mx) mx = p.value;
+      }
+    }
   }
   if (mx <= mn) mx = mn + 1;
   const yLineAt = v => lineTop + (1 - (v - mn) / (mx - mn)) * lineH;
@@ -861,6 +901,42 @@ function buildTooltipLineChart(series, width, height) {
     line += (i === 0 ? 'M' : 'L') + xAt(i).toFixed(1) + ',' + yLineAt(series[i].value).toFixed(1) + ' ';
   }
   const area = `M${xAt(0).toFixed(1)},${lineBot.toFixed(1)} ` + line.replace(/^M/, 'L') + `L${xAt(series.length - 1).toFixed(1)},${lineBot.toFixed(1)} Z`;
+
+  // Baseline overlay: dashed muted line spanning the same x-range. If the
+  // baseline has the same sample count as the strategy series we map
+  // index-for-index; otherwise we treat it as a flat target and stretch
+  // its first value across the full width.
+  let baselinePath = '';
+  let baselineEndLabel = '';
+  if (baselineSeries && baselineSeries.length) {
+    let bPath = '';
+    if (baselineSeries.length === series.length) {
+      for (let i = 0; i < baselineSeries.length; i++) {
+        const v = baselineSeries[i].value;
+        if (!Number.isFinite(v)) continue;
+        bPath += (bPath === '' ? 'M' : 'L') + xAt(i).toFixed(1) + ',' + yLineAt(v).toFixed(1) + ' ';
+      }
+    } else {
+      // Flat target — paint as a horizontal line at the (constant) value.
+      const v = baselineSeries[baselineSeries.length - 1].value;
+      if (Number.isFinite(v)) {
+        const yy = yLineAt(v).toFixed(1);
+        bPath = `M${xAt(0).toFixed(1)},${yy} L${xAt(series.length - 1).toFixed(1)},${yy}`;
+      }
+    }
+    if (bPath) {
+      baselinePath = `<path d="${bPath}" fill="none" stroke="rgba(226,232,240,0.55)" stroke-width="1.2" stroke-dasharray="3,3"/>`;
+      // Dollar-value tag pinned at the right end of the dashed line —
+      // shows the baseline's endpoint value so the user can compare it
+      // against the strategy's end value at a glance.
+      const lastV = baselineSeries[baselineSeries.length - 1].value;
+      if (Number.isFinite(lastV)) {
+        const yEnd = yLineAt(lastV);
+        const xEnd = xAt(series.length - 1);
+        baselineEndLabel = `<text x="${(xEnd - 4).toFixed(1)}" y="${(yEnd - 4).toFixed(1)}" text-anchor="end" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="rgba(226,232,240,0.85)" stroke="rgba(10,14,23,0.92)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${fmtFull(Math.round(lastV))}</text>`;
+      }
+    }
+  }
 
   // Start / end markers + value labels at the line endpoints. Decide whether
   // to place each label above or below the dot based on which side has more
@@ -899,8 +975,10 @@ function buildTooltipLineChart(series, width, height) {
     ${bars}
     ${baseline}
     <path d="${area}" fill="rgba(34,211,238,0.18)"/>
+    ${baselinePath}
     <path d="${line}" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
     ${barLabels}
+    ${baselineEndLabel}
     ${endpoints}
     ${xAxisLine}
     ${xAxis}

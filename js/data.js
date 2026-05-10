@@ -66,18 +66,27 @@ function getMonth(dateStr) {
 
 let quarterlyData, monthlyData; // populated by init()
 let dailyDateToIdx; // populated by init()
-let shiftedQuarterlyCache = []; // populated by init() — array of qData arrays, indexed [shift-1]
-let envelopeShiftCount = 0; // populated by init()
+let shiftedQuarterlyCache = []; // populated by init() — array of qData arrays, parallel to envelopeShiftDays
+let envelopeShiftDays    = []; // populated by init() — trading-day shift for each cache slot
+let envelopeShiftCount   = 0;  // populated by init() — = envelopeShiftDays.length
 
-function computeMaxShift() {
-  if (!quarterlyData || quarterlyData.length < 2) return 0;
-  let minLen = Infinity;
-  for (let i = 1; i < quarterlyData.length; i++) {
-    const a = dailyDateToIdx.get(quarterlyData[i - 1][0]);
-    const b = dailyDateToIdx.get(quarterlyData[i][0]);
-    if (a != null && b != null) minLen = Math.min(minLen, b - a);
+// One trading-quarter is roughly 63 trading days (5 days × 13 weeks, holidays
+// notwithstanding). Used to space the coarse "quarter-offset" envelope lines.
+const ENVELOPE_DAYS_PER_QUARTER = 63;
+const ENVELOPE_QUARTER_OFFSETS  = 40;  // # of additional quarter-spaced offsets
+
+// Build the list of trading-day shifts the envelope renders. Combines:
+//   • 1..63 daily shifts — fine-grained "what if the rebalance day-of-quarter
+//     was different" sensitivity within a single quarter.
+//   • 63 + k×63 for k=1..40 quarter-spaced shifts — coarse "what if the
+//     strategy started k quarters earlier" comparison band.
+function buildEnvelopeShifts() {
+  const shifts = [];
+  for (let d = 1; d <= ENVELOPE_DAYS_PER_QUARTER; d++) shifts.push(d);
+  for (let q = 1; q <= ENVELOPE_QUARTER_OFFSETS; q++) {
+    shifts.push(ENVELOPE_DAYS_PER_QUARTER + q * ENVELOPE_DAYS_PER_QUARTER);
   }
-  return Number.isFinite(minLen) ? Math.max(1, minLen - 1) : 0;
+  return shifts;
 }
 
 function getShiftedQuarterly(dayShift) {

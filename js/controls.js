@@ -7,10 +7,19 @@ function saveSliders() {
   const vals = {};
   SLIDER_IDS.forEach(id => vals[id] = document.getElementById(id).value);
   vals['toggle-envelope'] = document.getElementById('toggle-envelope').checked;
-  vals['toggle-bh-envelope'] = document.getElementById('toggle-bh-envelope').checked;
-  vals['toggle-log-scale'] = document.getElementById('toggle-log-scale').checked;
+  vals['toggle-log-scale'] =
+    document.getElementById('chart-log-toggle').getAttribute('aria-pressed') === 'true';
   vals['advanced-open'] = document.getElementById('advanced-section').classList.contains('open');
-  vals['adaptive-open'] = document.getElementById('adaptive-section').classList.contains('open');
+  // Per-line visibility (legend-chip eye toggles). Persisted so a plain page
+  // refresh restores the same hidden/visible mix the user left things in.
+  if (typeof chart !== 'undefined' && chart) {
+    const hidden = [];
+    chart.data.datasets.forEach((ds, i) => {
+      if (ds._isShift) return;
+      if (!chart.isDatasetVisible(i)) hidden.push(i);
+    });
+    vals['hidden-datasets'] = hidden;
+  }
   try { localStorage.setItem(LS_KEY, JSON.stringify(vals)); } catch(e) {}
 }
 
@@ -28,51 +37,36 @@ document.getElementById('slider-envelope-opacity').addEventListener('input', () 
   document.getElementById('disp-envelope-opacity').textContent = 'opacity ' + v.toFixed(2);
   if (chart) {
     const c9 = `rgba(34,211,238,${v})`;
-    const cB = `rgba(248,113,113,${v})`;
     for (let i = 0; i < envelopeShiftCount; i++) {
       const ds9 = chart.data.datasets[9 + i];
       if (ds9) ds9.borderColor = c9;
-      const dsB = chart.data.datasets[9 + envelopeShiftCount + i];
-      if (dsB) dsB.borderColor = cB;
     }
     chart.update('none');
   }
   saveSliders();
 });
 
-['toggle-envelope', 'toggle-bh-envelope', 'toggle-log-scale'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => {
-    saveSliders();
-    render();
-  });
+document.getElementById('toggle-envelope').addEventListener('change', () => {
+  saveSliders();
+  render();
 });
 
-// In-chart "log" pill mirrors the Logarithmic Y-axis checkbox so the user can
-// flip the y-scale without leaving the chart.
-const logCheckbox = document.getElementById('toggle-log-scale');
+// In-chart "log" pill is the sole source-of-truth for the logarithmic
+// Y-axis state — its aria-pressed attribute holds the boolean.
 const logPill = document.getElementById('chart-log-toggle');
-const syncLogPill = () => logPill.setAttribute('aria-pressed', logCheckbox.checked ? 'true' : 'false');
+const isLogScale = () => logPill.getAttribute('aria-pressed') === 'true';
+const setLogScale = (on) => logPill.setAttribute('aria-pressed', on ? 'true' : 'false');
 logPill.addEventListener('click', () => {
-  logCheckbox.checked = !logCheckbox.checked;
-  logCheckbox.dispatchEvent(new Event('change'));
-  syncLogPill();
+  setLogScale(!isLogScale());
+  saveSliders();
+  render();
 });
-logCheckbox.addEventListener('change', syncLogPill);
-syncLogPill();
 
 function toggleAdvanced() {
   const sec = document.getElementById('advanced-section');
   sec.classList.toggle('open');
   const open = sec.classList.contains('open');
   document.getElementById('advanced-toggle').textContent = open ? '− advanced' : '+ advanced';
-  saveSliders();
-}
-
-function toggleAdaptive() {
-  const sec = document.getElementById('adaptive-section');
-  sec.classList.toggle('open');
-  const open = sec.classList.contains('open');
-  document.getElementById('adaptive-toggle').textContent = open ? '− adaptive strategy' : '+ adaptive strategy';
   saveSliders();
 }
 
@@ -280,24 +274,25 @@ function shareConfig() {
   params.set('tw', get('select-tqqq-window').value);
 
   // Toggles
-  params.set('l',  get('toggle-log-scale').checked   ? '1' : '0');
+  params.set('l',
+    document.getElementById('chart-log-toggle').getAttribute('aria-pressed') === 'true' ? '1' : '0');
   params.set('ev', get('toggle-envelope').checked    ? '1' : '0');
-  params.set('bv', get('toggle-bh-envelope').checked ? '1' : '0');
   params.set('eo', get('slider-envelope-opacity').value);
 
   // Section open/closed state
   params.set('vo', document.getElementById('advanced-section').classList.contains('open') ? '1' : '0');
-  params.set('ao', document.getElementById('adaptive-section').classList.contains('open') ? '1' : '0');
 
   // Dataset visibility — captures per-line legend toggles (e.g., "I hid the
-  // adaptive line"). Only encode if at least one is hidden.
+  // adaptive line"). Always set, even if empty, so the URL is fully
+  // authoritative. Recipient code treats `hd=` (empty) as "nothing hidden"
+  // and skips the localStorage fallback.
   if (typeof chart !== 'undefined' && chart) {
     const hidden = [];
     chart.data.datasets.forEach((ds, i) => {
       if (ds._isShift) return; // ignore the envelope-shift datasets
       if (!chart.isDatasetVisible(i)) hidden.push(i);
     });
-    if (hidden.length) params.set('hd', hidden.join(','));
+    params.set('hd', hidden.join(','));
   }
 
   // Analytics modal state

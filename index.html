@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TQQQ Strategies Simulator</title>
+<title>Strategies Simulator · Backtesting</title>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-XJ1P981CGQ"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -20,8 +20,8 @@
 <body>
 
 <div class="header">
-  <h1>TQQQ Strategies Simulator</h1>
-  <p>Backtesting strategies on synthetic TQQQ (3x QQQ) &middot; 1938&ndash;2026</p>
+  <h1>Strategies Simulator</h1>
+  <p>Backtesting &middot; synthetic TQQQ (3x QQQ) &middot; 1938&ndash;2026</p>
   <button id="share-btn" onclick="shareConfig()">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
     Share Current Configuration
@@ -47,24 +47,6 @@
 
     <div class="section-toggle-row">
       <button id="advanced-toggle" onclick="toggleAdvanced()">+ advanced</button>
-      <button id="adaptive-toggle" onclick="toggleAdaptive()">+ adaptive strategy</button>
-    </div>
-
-    <div id="adaptive-section">
-      <div class="control-group">
-        <div class="adaptive-line">
-          Switch to <strong>9sig</strong> when TQQQ is
-          <select class="inline-select" id="select-tqqq-above"></select>× as much as 9sig
-        </div>
-        <div class="adaptive-line">
-          Switch to <strong>all-in TQQQ</strong> when 9sig is
-          <select class="inline-select" id="select-tqqq-below"></select>× as much as TQQQ
-        </div>
-        <div class="adaptive-line">
-          measured over the last
-          <select class="inline-select" id="select-tqqq-window"></select> year period
-        </div>
-      </div>
     </div>
 
     <div id="advanced-section">
@@ -77,55 +59,15 @@
       <div class="control-group">
         <label>Cash Interest Rate (Annual)</label>
         <div class="value-display" id="disp-rate">4.0%</div>
-        <input type="range" id="slider-rate" min="0" max="15" step="0.25" value="4">
+        <input type="range" id="slider-rate" min="0" max="40" step="0.25" value="4">
       </div>
 
-      <div class="control-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
-          <input type="checkbox" id="toggle-log-scale" style="cursor:pointer;accent-color:var(--accent)">
-          <span style="color:var(--text);font-size:12px">Logarithmic Y-axis</span>
-        </label>
-      </div>
-
-      <div class="control-group">
-        <label>Date Shift Envelopes</label>
-        <div style="display:flex;gap:18px;margin:6px 0 8px">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;margin:0">
-            <input type="checkbox" id="toggle-envelope" style="cursor:pointer;accent-color:var(--accent)">
-            <span style="color:var(--accent)">9sig</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;margin:0">
-            <input type="checkbox" id="toggle-bh-envelope" style="cursor:pointer;accent-color:var(--red)">
-            <span style="color:var(--red)">B&amp;H TQQQ</span>
-          </label>
-        </div>
-        <div class="value-display" id="disp-envelope-opacity" style="font-size:14px">opacity 0.10</div>
-        <input type="range" id="slider-envelope-opacity" min="1" max="50" step="1" value="10">
-        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4" id="envelope-note">
-          Each ghost line replays the same strategy with rebalance/entry shifted N trading days earlier within the quarter.
-        </div>
-      </div>
-    </div>
-
-    <div class="divider"></div>
-    <h2>Results</h2>
-    <div class="stats-grid" id="stats-grid"></div>
-
-    <div class="info-note">
-      <strong>9sig Rules:</strong><br>
-      &bull; Initial allocation: 60% TQQQ / 40% cash<br>
-      &bull; Signal line grows 9% per quarter<br>
-      &bull; Above signal &rarr; sell excess to cash<br>
-      &bull; Below signal &rarr; buy from cash to reach signal<br>
-      &bull; Monthly contributions go 100% to cash; signal line rises by 50% of new cash<br>
-      &bull; 90% buying power throttle &mdash; buy signals use at most 90% of cash<br>
-      &bull; 30-down no-sell &mdash; skip sell up to 2 consecutive quarters if TQQQ is 30%+ below its 2-year high<br>
-      &bull; Spike reset &mdash; if TQQQ doubles in a quarter and stock allocation stays 60&ndash;100% after rebalance, hard-reset to 60% TQQQ
     </div>
   </div>
 
   <div class="right-col">
     <div class="panel" style="position:relative;">
+      <div id="chart-legend" class="chart-legend"></div>
       <div class="chart-container">
         <canvas id="mainChart"></canvas>
         <button type="button" id="chart-log-toggle" class="chart-log-toggle" aria-pressed="false" title="Toggle logarithmic Y-axis">log</button>
@@ -156,28 +98,6 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Quarterly Rebalance Log</h2>
-      <div class="quarter-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Quarter</th>
-              <th>Invested</th>
-              <th>TQQQ Val</th>
-              <th>Target</th>
-              <th>Cash</th>
-              <th>9sig Total</th>
-              <th>B&H TQQQ</th>
-              <th>B&H QQQ</th>
-              <th>B&H SPY</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="log-body"></tbody>
-        </table>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -244,6 +164,50 @@
     </div>
   </div>
   <div id="heatmap-tooltip" class="heatmap-tooltip" hidden></div>
+</div>
+
+<aside id="strategy-panel" class="strategy-panel" aria-hidden="true">
+  <div class="strategy-panel-backdrop"></div>
+  <div class="strategy-panel-content">
+    <div class="strategy-panel-header">
+      <h3 id="strategy-panel-title">Strategy</h3>
+      <button type="button" class="strategy-panel-close" aria-label="Close">×</button>
+    </div>
+    <div class="strategy-panel-body" id="strategy-panel-body">
+    </div>
+  </div>
+</aside>
+
+<div id="envelope-controls-host" hidden>
+  <div class="control-group" id="envelope-controls">
+    <label>What If You Rebalanced on a Different Day?</label>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:6px 0 8px;font-size:12px">
+      <input type="checkbox" id="toggle-envelope" style="cursor:pointer;accent-color:var(--accent)">
+      <span style="color:var(--text)">Show alternate runs</span>
+    </label>
+    <div class="value-display" id="disp-envelope-opacity" style="font-size:14px">opacity 0.10</div>
+    <input type="range" id="slider-envelope-opacity" min="1" max="50" step="1" value="10">
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4" id="envelope-note">
+      Each ghost line is the same 9sig strategy with rebalance shifted to a different day — see how much the outcome depends on when you rebalance.
+    </div>
+  </div>
+</div>
+
+<div id="adaptive-controls-host" hidden>
+  <div class="control-group" id="adaptive-controls">
+    <div class="adaptive-line">
+      Switch to <strong>9sig</strong> when TQQQ is
+      <select class="inline-select" id="select-tqqq-above"></select>× as much as 9sig
+    </div>
+    <div class="adaptive-line">
+      Switch to <strong>all-in TQQQ</strong> when 9sig is
+      <select class="inline-select" id="select-tqqq-below"></select>× as much as TQQQ
+    </div>
+    <div class="adaptive-line">
+      measured over the last
+      <select class="inline-select" id="select-tqqq-window"></select> year period
+    </div>
+  </div>
 </div>
 
 <script src="js/data.js"></script>

@@ -1,4 +1,317 @@
 let chart = null;
+// Latest rebalance-log data, surfaced inside the 9sig side panel's table.
+// Populated on every render(); cleared when there's not enough data to sim.
+let _logData = null;
+
+// Build the compact legend chips that sit above the chart. Each chip
+// combines an eye-toggle, color dot, dataset name, and (when available)
+// the strategy's annualized CAGR. Click toggles dataset visibility, which
+// re-renders the legend so the chip's hidden-style stays in sync.
+// Main legend order: only the six "primary" strategies. The three 9sig
+// supporting lines (TQQQ holding / target / cash) live inside the 9sig
+// side-panel instead — see SUB_LEGEND below.
+const LEGEND_ORDER = [
+  8, // Adaptive
+  0, // 9sig
+  2, // B&H TQQQ
+  3, // B&H QQQ
+  4, // B&H SPY
+  7, // Invested Compounded
+];
+// When a strategy chip's "more" is clicked, its panel can show nested
+// chips for related sub-series. Currently only 9sig has any.
+const SUB_LEGEND = {
+  0: [1, 5, 6], // 9sig → TQQQ Holding, TQQQ Target, 9sig Cash
+};
+
+// Build legend-chip HTML for a list of dataset indices. Used by both the
+// main top-of-chart legend and the strategy side-panel's nested chips.
+function buildLegendChipsHtml(indices, opts) {
+  if (!chart) return '';
+  const includeMore = !(opts && opts.noMore);
+  const cagrMap = window._cagrByDatasetIdx || {};
+  const metrics = window._strategyMetrics || {};
+  const out = [];
+  for (const i of indices) {
+    const ds = chart.data.datasets[i];
+    if (!ds || ds._isShift) continue;
+    const isHidden = !chart.isDatasetVisible(i);
+    const dotColor = typeof ds.borderColor === 'string' ? ds.borderColor : '#94a3b8';
+    const cagr = cagrMap[i];
+    const m    = metrics[i];
+    // Two-line metrics block: CAGR row on top, max drawdown below. Each
+    // row is "label value" so users can tell them apart at a glance.
+    // Only rendered for main-strategy chips that have computed metrics.
+    let metricsHtml = '';
+    if (cagr !== undefined && Number.isFinite(cagr)) {
+      const cagrSign = cagr >= 0 ? '+' : '';
+      const cagrCls  = cagr >= 0 ? 'positive' : 'negative';
+      const cagrStr  = `${cagrSign}${cagr.toFixed(1)}%`;
+      let ddRow = '';
+      if (m && Number.isFinite(m.maxDD)) {
+        const ddStr = m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%';
+        ddRow = `
+          <div class="legend-metric-row">
+            <span class="legend-metric-label">DD</span>
+            <span class="legend-metric-value negative">${ddStr}</span>
+          </div>`;
+      }
+      metricsHtml = `
+        <div class="legend-metrics">
+          <div class="legend-metric-row">
+            <span class="legend-metric-label">CAGR</span>
+            <span class="legend-metric-value ${cagrCls}">${cagrStr}</span>
+          </div>
+          ${ddRow}
+        </div>`;
+    }
+    const moreBtn = includeMore
+      ? `<button type="button" class="legend-more" aria-label="Open details panel" title="Open details panel">
+           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="17 9 14 12 17 15"/></svg>
+         </button>`
+      : '';
+    out.push(
+      `<div class="legend-chip${isHidden ? ' legend-hidden' : ''}" data-idx="${i}" role="button" tabindex="0" title="Click eye/name to toggle">
+        <svg class="legend-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          ${isHidden
+            ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>'
+            : '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>'}
+        </svg>
+        <span class="legend-dot" style="background:${dotColor}"></span>
+        <span class="legend-name">${ds.label}</span>
+        ${metricsHtml}
+        ${moreBtn}
+      </div>`
+    );
+  }
+  return out.join('');
+}
+
+function renderChartLegend() {
+  const host = document.getElementById('chart-legend');
+  if (!host || !chart) return;
+  host.innerHTML = buildLegendChipsHtml(LEGEND_ORDER);
+}
+
+let _currentPanelIdx = null;
+
+// Static content shown for specific strategies in their detail panel.
+// Currently only 9sig has a content block (rules + rebalance log).
+const NINE_SIG_RULES_HTML = `
+  <div class="strategy-panel-section-label">9sig Rules</div>
+  <div class="strategy-rules">
+    &bull; Initial allocation: 60% TQQQ / 40% cash<br>
+    &bull; Signal line grows 9% per quarter<br>
+    &bull; Above signal &rarr; sell excess to cash<br>
+    &bull; Below signal &rarr; buy from cash to reach signal<br>
+    &bull; Monthly contributions go 100% to cash; signal line rises by 50% of new cash<br>
+    &bull; 90% buying power throttle &mdash; buy signals use at most 90% of cash<br>
+    &bull; 30-down no-sell &mdash; skip sell up to 2 consecutive quarters if TQQQ is 30%+ below its 2-year high<br>
+    &bull; Spike reset &mdash; if TQQQ doubles in a quarter and stock allocation stays 60&ndash;100% after rebalance, hard-reset to 60% TQQQ
+  </div>
+`;
+
+function buildLogTableHtml(d) {
+  if (!d || !d.log || !d.log.length) return '';
+  const rows = d.log.map((l, i) => {
+    const ac = l.action.startsWith('SELL') ? 'action-sell' : l.action.startsWith('BUY') ? 'action-buy' : 'action-hold';
+    const bhVal  = d.bhPoints[i]  ? d.bhPoints[i].value  : 0;
+    const qqqVal = d.qqqPoints[i] ? d.qqqPoints[i].value : 0;
+    const spyVal = d.spyPoints[i] ? d.spyPoints[i].value : 0;
+    return `<tr>
+      <td>${l.date.substring(0,7)}</td>
+      <td>${fmtFull(l.invested)}</td>
+      <td>${fmtFull(Math.round(l.tqqqVal))}</td>
+      <td style="color:#fb923c">${fmtFull(Math.round(l.target))}</td>
+      <td>${fmtFull(Math.round(l.cash))}</td>
+      <td>${fmtFull(Math.round(l.total))}</td>
+      <td style="color:#f87171">${fmtFull(Math.round(bhVal))}</td>
+      <td style="color:#4ade80">${fmtFull(Math.round(qqqVal))}</td>
+      <td style="color:#f472b6">${fmtFull(Math.round(spyVal))}</td>
+      <td class="${ac}">${l.action}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="strategy-panel-section-label" style="margin-top:24px">Quarterly Rebalance Log</div>
+    <div class="quarter-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Quarter</th>
+            <th>Invested</th>
+            <th>TQQQ Val</th>
+            <th>Target</th>
+            <th>Cash</th>
+            <th>9sig</th>
+            <th>B&H TQQQ</th>
+            <th>B&H QQQ</th>
+            <th>B&H SPY</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+// Render the 4-stat grid (CAGR / Start / End / Max DD) for one dataset idx.
+// Stats come from window._strategyMetrics, populated each render(). Returns
+// an empty string when there are no metrics for the idx.
+function renderStatsGrid(idx) {
+  const m = (window._strategyMetrics || {})[idx];
+  if (!m) return '';
+  const cagrSign = m.cagr >= 0 ? '+' : '';
+  const cagrCls  = m.cagr >= 0 ? 'positive' : 'negative';
+  const cagrStr  = Number.isFinite(m.cagr) ? `${cagrSign}${m.cagr.toFixed(1)}%` : '–';
+  const ddStr    = Number.isFinite(m.maxDD) && m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%';
+  return `
+    <div class="strategy-stats">
+      <div class="strategy-stat">
+        <div class="strategy-stat-label">CAGR</div>
+        <div class="strategy-stat-value ${cagrCls}">${cagrStr}</div>
+      </div>
+      <div class="strategy-stat">
+        <div class="strategy-stat-label">Starting Balance</div>
+        <div class="strategy-stat-value">${fmtFull(Math.round(m.start))}</div>
+      </div>
+      <div class="strategy-stat">
+        <div class="strategy-stat-label">Ending Balance</div>
+        <div class="strategy-stat-value">${fmtFull(Math.round(m.end))}</div>
+      </div>
+      <div class="strategy-stat">
+        <div class="strategy-stat-label">Max Drawdown</div>
+        <div class="strategy-stat-value negative">${ddStr}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Map of dataset idx → IDs of "live" control blocks that get appended into
+// the panel body for that strategy. The actual elements live in a hidden
+// host outside the panel so they keep their state/listeners across the
+// frequent body re-renders fired by refreshAllLegends().
+const PANEL_LIVE_CONTROLS = {
+  0: ['envelope-controls'], // 9sig sidebar gets the rebalancing-offset controls
+  8: ['adaptive-controls'], // Adaptive sidebar gets the strategy-switch params
+};
+const ALL_LIVE_CONTROL_IDS = Array.from(
+  new Set(Object.values(PANEL_LIVE_CONTROLS).flat())
+);
+
+// Move any currently-injected live control nodes back to their hidden
+// hosts. Must be called before replacing innerHTML, otherwise the children
+// would be discarded along with the body's old contents.
+function detachLiveControls() {
+  for (const id of ALL_LIVE_CONTROL_IDS) {
+    const node = document.getElementById(id);
+    if (!node) continue;
+    const host = document.getElementById(id + '-host');
+    if (host && node.parentNode !== host) host.appendChild(node);
+  }
+}
+
+function renderStrategyPanelBody(idx) {
+  const body = document.getElementById('strategy-panel-body');
+  if (!body || !chart) return;
+  // Detach hosted controls before clobbering innerHTML.
+  detachLiveControls();
+  let html = '';
+  // Stats grid for the main strategy this panel was opened for.
+  // Sub-series chips intentionally have no per-pill stats — measurements
+  // belong to the top-level strategy only.
+  html += renderStatsGrid(idx);
+  const subs = SUB_LEGEND[idx];
+  if (subs && subs.length) {
+    html += `
+      <div class="strategy-panel-section-label">Sub-series</div>
+      <div class="legend-chip-group">${buildLegendChipsHtml(subs, { noMore: true })}</div>
+    `;
+  }
+  // 9sig-specific content: rules + quarterly rebalance log.
+  if (idx === 0) {
+    html += `<div class="strategy-rules-wrap" style="margin-top:24px">${NINE_SIG_RULES_HTML}</div>`;
+    html += buildLogTableHtml(_logData);
+  }
+  body.innerHTML = html;
+  // Re-attach live control nodes for this idx (if any). Configuration
+  // controls live at the TOP of the panel — above stats/rules/log — so they
+  // don't get buried under long content like the rebalance log.
+  const liveIds = PANEL_LIVE_CONTROLS[idx];
+  if (liveIds) {
+    // Reverse so successive prepends preserve the declared order.
+    for (const id of [...liveIds].reverse()) {
+      const node = document.getElementById(id);
+      if (node) body.prepend(node);
+    }
+  }
+}
+
+// Strategy detail side panel — opens when a legend chip's more-button is
+// clicked. Title is the strategy name; body shows nested chips for any
+// sub-series defined in SUB_LEGEND (e.g. 9sig's TQQQ holding/target/cash).
+function openStrategyPanel(idx) {
+  const panel = document.getElementById('strategy-panel');
+  const title = document.getElementById('strategy-panel-title');
+  if (!panel) return;
+  const ds = chart && chart.data.datasets[idx];
+  if (title && ds) title.textContent = ds.label;
+  _currentPanelIdx = idx;
+  renderStrategyPanelBody(idx);
+  panel.classList.add('is-open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+function closeStrategyPanel() {
+  const panel = document.getElementById('strategy-panel');
+  if (!panel) return;
+  _currentPanelIdx = null;
+  panel.classList.remove('is-open');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
+// Re-render whichever legend surface(s) need updating after a visibility
+// toggle — main legend always; the side panel's nested chips when open.
+function refreshAllLegends() {
+  renderChartLegend();
+  if (_currentPanelIdx !== null) renderStrategyPanelBody(_currentPanelIdx);
+}
+
+// Single delegated click handler — the legend HTML gets replaced on every
+// render, so attaching here once on document avoids leaks/duplicate
+// listeners while still working after re-renders.
+document.addEventListener('click', (e) => {
+  // More-button click → open the side panel for this strategy. Check this
+  // first so we don't also fire the visibility toggle.
+  const moreBtn = e.target.closest('.legend-more');
+  if (moreBtn) {
+    const chip = moreBtn.closest('.legend-chip[data-idx]');
+    if (chip) openStrategyPanel(+chip.dataset.idx);
+    return;
+  }
+  // Side-panel close button or backdrop → close.
+  if (e.target.closest('.strategy-panel-close') ||
+      e.target.classList.contains('strategy-panel-backdrop')) {
+    closeStrategyPanel();
+    return;
+  }
+  // Anywhere else on the chip → toggle dataset visibility.
+  const chip = e.target.closest('.legend-chip[data-idx]');
+  if (!chip || !chart) return;
+  const idx = +chip.dataset.idx;
+  if (!Number.isFinite(idx)) return;
+  chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+  chart.update();
+  refreshAllLegends();
+  // Persist so a plain page refresh keeps the same legend visibility mix.
+  if (typeof saveSliders === 'function') saveSliders();
+});
+
+// Esc closes the side panel too.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const panel = document.getElementById('strategy-panel');
+  if (panel && panel.classList.contains('is-open')) closeStrategyPanel();
+});
 
 function render() {
   if (!quarterlyData) return; // data not loaded yet
@@ -6,7 +319,7 @@ function render() {
   const monthly = +document.getElementById('slider-monthly').value;
   const annualRaise = +document.getElementById('slider-raise').value / 100;
   const rate = +document.getElementById('slider-rate').value / 100;
-  const logScale = document.getElementById('toggle-log-scale').checked;
+  const logScale = document.getElementById('chart-log-toggle').getAttribute('aria-pressed') === 'true';
   const tqqqAboveMult = +document.getElementById('select-tqqq-above').value;  // e.g. 2.0× = TQQQ is 2× of 9sig
   const tqqqBelowMult = +document.getElementById('select-tqqq-below').value;  // e.g. 1.2× = 9sig is 1.2× of TQQQ
   const tqqqWindow    = +document.getElementById('select-tqqq-window').value;
@@ -44,22 +357,17 @@ function render() {
   const { log, bhPoints, qqqPoints, spyPoints, adaptivePoints, totalContributed } = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, { switchTo9sig, switchToAllIn, yearsBack: tqqqWindow });
 
   const showEnvelope = document.getElementById('toggle-envelope').checked;
-  const showBhEnvelope = document.getElementById('toggle-bh-envelope').checked;
   const opacityVal = +document.getElementById('slider-envelope-opacity').value / 100;
   document.getElementById('disp-envelope-opacity').textContent = 'opacity ' + opacityVal.toFixed(2);
   const envColor = `rgba(34,211,238,${opacityVal})`;
-  const envColorBh = `rgba(248,113,113,${opacityVal})`;
   const shiftResults = showEnvelope
     ? shiftedQuarterlyCache.map(qData => simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, { qData, skipBH: true }).log.map(l => l.total))
     : [];
-  const bhShiftResults = showBhEnvelope
-    ? shiftedQuarterlyCache.map(qData => simulateBhTqqq(initial, monthly, annualRaise, entryIdx, exitIdx, qData))
-    : [];
 
   if (log.length < 1) {
-    document.getElementById('stats-grid').innerHTML = '<div class="stat-card" style="grid-column:span 2"><div class="stat-label">Select a wider period</div></div>';
     if (chart) { chart.destroy(); chart = null; }
-    document.getElementById('log-body').innerHTML = '';
+    _logData = null;
+    refreshAllLegends();
     return;
   }
 
@@ -77,32 +385,18 @@ function render() {
   const retInv = cagr(finalLog.investedCompounded, totalContributed);
   const retAdaptive = cagr(finalAdaptive, totalContributed);
 
-  document.getElementById('stats-grid').innerHTML = `
-    <div class="stat-card">
-      <div class="stat-label">9sig Annualized</div>
-      <div class="stat-value ${ret9 >= 0 ? 'positive' : 'negative'}">${ret9 >= 0 ? '+' : ''}${ret9.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Adaptive Annualized</div>
-      <div class="stat-value ${retAdaptive >= 0 ? 'positive' : 'negative'}">${retAdaptive >= 0 ? '+' : ''}${retAdaptive.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">B&H TQQQ Annualized</div>
-      <div class="stat-value ${retBH >= 0 ? 'positive' : 'negative'}">${retBH >= 0 ? '+' : ''}${retBH.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">B&H QQQ Annualized</div>
-      <div class="stat-value ${retQQQ >= 0 ? 'positive' : 'negative'}">${retQQQ >= 0 ? '+' : ''}${retQQQ.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">B&H SPY Annualized</div>
-      <div class="stat-value ${retSPY >= 0 ? 'positive' : 'negative'}">${retSPY >= 0 ? '+' : ''}${retSPY.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Invested Compounded Annualized</div>
-      <div class="stat-value ${retInv >= 0 ? 'positive' : 'negative'}">${retInv >= 0 ? '+' : ''}${retInv.toFixed(1)}%</div>
-    </div>
-  `;
+  // CAGR per dataset index — used by the compact legend chips below the
+  // chart title. Indices match the order datasets are pushed into the chart
+  // (see lineNames). Datasets without a CAGR (TQQQ holding line, signal
+  // line, cash line, envelope shifts) get just name + eye in their chip.
+  window._cagrByDatasetIdx = {
+    0: ret9,
+    2: retBH,
+    3: retQQQ,
+    4: retSPY,
+    7: retInv,
+    8: retAdaptive,
+  };
 
   // Chart
   const labels = log.map(l => l.date);
@@ -115,13 +409,42 @@ function render() {
   const invD = log.map(l => l.investedCompounded);
   const targetD = log.map(l => l.target);
   const adaptiveD = adaptivePoints.map(a => a.value);
+
+  // Per-dataset stats shown inside the strategy side panel (CAGR / starting
+  // balance / ending balance / max drawdown). Main strategies reuse their
+  // money-weighted CAGR (vs total contributed); sub-series fall back to the
+  // annualized growth rate of their own balance.
+  const seriesByIdx = {
+    0: totalD, 1: tqqqValD, 2: bhD, 3: qqqD, 4: spyD,
+    5: targetD, 6: cashD, 7: invD, 8: adaptiveD,
+  };
+  const mainCagrIdx = window._cagrByDatasetIdx;
+  window._strategyMetrics = {};
+  for (const [idxStr, series] of Object.entries(seriesByIdx)) {
+    if (!series || !series.length) continue;
+    const i     = +idxStr;
+    const start = series[0];
+    const end   = series[series.length - 1];
+    const cagrVal = mainCagrIdx[i] !== undefined
+      ? mainCagrIdx[i]
+      : (years > 0 && start > 0 ? (Math.pow(end / start, 1 / years) - 1) * 100 : 0);
+    window._strategyMetrics[i] = {
+      cagr:  cagrVal,
+      start,
+      end,
+      maxDD: computeMaxDrawdown(series) * 100,
+    };
+  }
   // Transition markers: dot at every quarter the strategy switched. Cyan for
   // → 9sig, red for → all-in TQQQ, transparent (radius 0) on non-switch quarters.
   // The plugin draws connector + label; keep pointRadius 0 so we don't
   // double-up. Transition dot is rendered by the plugin itself for full
   // control over size/color/layering.
   const adaptivePointRadius = adaptivePoints.map(() => 0);
-  const adaptivePointHoverRadius = adaptivePoints.map(() => 0);
+  // Non-zero hover radius so the adaptive line gets the same point-on-hover
+  // affordance as the other strategy lines. The static (non-hover) radius
+  // stays 0 so transition markers drawn by the plugin don't get doubled.
+  const adaptivePointHoverRadius = adaptivePoints.map(() => 4);
   const adaptivePointBg = adaptivePoints.map(a => a.state === '9sig' ? '#22d3ee' : '#f87171');
   const adaptiveTransitions = adaptivePoints.map((a, i) => {
     if (i === 0) return a.state === '9sig' ? 'to 9sig' : 'to TQQQ';
@@ -145,13 +468,12 @@ function render() {
     chart.data.datasets[8].pointBackgroundColor = adaptivePointBg;
     chart.data.datasets[8].pointBorderColor = adaptivePointBg;
     chart.data.datasets[8]._transitions = adaptiveTransitions;
-    while (chart.data.datasets.length < 9 + envelopeShiftCount * 2) {
+    while (chart.data.datasets.length < 9 + envelopeShiftCount) {
       const offset = chart.data.datasets.length - 9;
-      const isBh = offset >= envelopeShiftCount;
       chart.data.datasets.push({
-        label: (isBh ? '_bhshift_' : '_shift_') + ((offset % envelopeShiftCount) + 1),
+        label: '_shift_' + (offset + 1),
         data: [],
-        borderColor: isBh ? envColorBh : envColor,
+        borderColor: envColor,
         backgroundColor: 'transparent',
         fill: false,
         tension: 0.3,
@@ -167,10 +489,6 @@ function render() {
       ds9.data = showEnvelope ? (shiftResults[i] || []) : [];
       ds9.borderColor = envColor;
       ds9.hidden = !showEnvelope;
-      const dsB = chart.data.datasets[9 + envelopeShiftCount + i];
-      dsB.data = showBhEnvelope ? (bhShiftResults[i] || []) : [];
-      dsB.borderColor = envColorBh;
-      dsB.hidden = !showBhEnvelope;
     }
     chart.options.scales.y.type = logScale ? 'logarithmic' : 'linear';
     chart.options.scales.y.beginAtZero = !logScale;
@@ -179,7 +497,7 @@ function render() {
   const ctx = document.getElementById('mainChart').getContext('2d');
 
   const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#c084fc'];
-  const lineNames  = ['9sig Total', '9sig TQQQ Holding', 'B&H TQQQ', 'B&H QQQ', 'B&H SPY', '9sig TQQQ Target', '9sig Cash', 'Invested Comp.', 'Adaptive'];
+  const lineNames  = ['9sig', '9sig TQQQ Holding', 'B&H TQQQ', 'B&H QQQ', 'B&H SPY', '9sig TQQQ Target', '9sig Cash', 'Invested Comp.', 'Adaptive'];
   // Match the borderDash on the corresponding chart dataset; null = solid.
   const lineDashes = [null, [2,2], [6,3], [8,4], [6,3], [4,4], null, [3,3], null];
 
@@ -497,15 +815,16 @@ function render() {
       labels,
       datasets: [
         {
-          label: '9sig Total',
+          label: '9sig',
           data: totalD,
           borderColor: '#22d3ee',
-          backgroundColor: 'rgba(34,211,238,0.07)',
-          fill: true,
+          backgroundColor: 'transparent',
+          fill: false,
           tension: 0.3,
           pointRadius: 0,
           pointHitRadius: 10,
-          borderWidth: 2.5
+          borderWidth: 2.5,
+          hidden: true
         },
         {
           label: '9sig TQQQ Holding',
@@ -542,8 +861,7 @@ function render() {
           pointRadius: 0,
           pointHitRadius: 10,
           borderWidth: 2,
-          borderDash: [8, 4],
-          hidden: true
+          borderDash: [8, 4]
         },
         {
           label: 'B&H SPY',
@@ -555,7 +873,8 @@ function render() {
           pointRadius: 0,
           pointHitRadius: 10,
           borderWidth: 2,
-          borderDash: [6, 3]
+          borderDash: [6, 3],
+          hidden: true
         },
         {
           label: '9sig TQQQ Target',
@@ -608,6 +927,7 @@ function render() {
           pointHitRadius: 10,
           borderWidth: 2,
           order: 100,         // highest order in Chart.js → drawn LAST → on top of every other line
+          hidden: true,
           _transitions: adaptiveTransitions
         },
         ...Array.from({ length: envelopeShiftCount }, (_, i) => ({
@@ -623,20 +943,6 @@ function render() {
           order: -1,
           hidden: !showEnvelope,
           _isShift: true
-        })),
-        ...Array.from({ length: envelopeShiftCount }, (_, i) => ({
-          label: '_bhshift_' + (i + 1),
-          data: showBhEnvelope ? (bhShiftResults[i] || []) : [],
-          borderColor: envColorBh,
-          backgroundColor: 'transparent',
-          fill: false,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHitRadius: 0,
-          borderWidth: 1,
-          order: -1,
-          hidden: !showBhEnvelope,
-          _isShift: true
         }))
       ]
     },
@@ -646,20 +952,7 @@ function render() {
       interaction: { mode: 'index', intersect: false },
       layout: { padding: { right: 120 } },
       plugins: {
-        legend: {
-          display: true,
-          position: 'top',
-          labels: {
-            color: '#94a3b8',
-            font: { family: 'DM Sans', size: 11 },
-            usePointStyle: true,
-            pointStyle: 'circle',
-            padding: 16,
-            boxWidth: 8,
-            boxHeight: 8,
-            filter: (item, data) => !data.datasets[item.datasetIndex]._isShift
-          }
-        },
+        legend: { display: false }, // replaced with custom #chart-legend chips
         tooltip: {
           enabled: false,
           external: externalTooltip
@@ -690,7 +983,7 @@ function render() {
           // is way too dense. Keep only "nice" ticks (1, 2, 5 × 10^n) so the
           // axis stays readable.
           afterBuildTicks: (scale) => {
-            if (!document.getElementById('toggle-log-scale').checked) return;
+            if (document.getElementById('chart-log-toggle').getAttribute('aria-pressed') !== 'true') return;
             scale.ticks = scale.ticks.filter(t => {
               const v = t.value;
               if (v <= 0) return false;
@@ -706,25 +999,12 @@ function render() {
   });
   } // end else (first render)
 
-  // Table
-  document.getElementById('log-body').innerHTML = log.map((l, i) => {
-    const ac = l.action.startsWith('SELL') ? 'action-sell' : l.action.startsWith('BUY') ? 'action-buy' : 'action-hold';
-    const bhVal = bhPoints[i] ? bhPoints[i].value : 0;
-    const qqqVal = qqqPoints[i] ? qqqPoints[i].value : 0;
-    const spyVal = spyPoints[i] ? spyPoints[i].value : 0;
-    return `<tr>
-      <td>${l.date.substring(0,7)}</td>
-      <td>${fmtFull(l.invested)}</td>
-      <td>${fmtFull(Math.round(l.tqqqVal))}</td>
-      <td style="color:#fb923c">${fmtFull(Math.round(l.target))}</td>
-      <td>${fmtFull(Math.round(l.cash))}</td>
-      <td>${fmtFull(Math.round(l.total))}</td>
-      <td style="color:#f87171">${fmtFull(Math.round(bhVal))}</td>
-      <td style="color:#4ade80">${fmtFull(Math.round(qqqVal))}</td>
-      <td style="color:#f472b6">${fmtFull(Math.round(spyVal))}</td>
-      <td class="${ac}">${l.action}</td>
-    </tr>`;
-  }).join('');
+  // Stash latest data for the 9sig side panel's rebalance log table.
+  _logData = { log, bhPoints, qqqPoints, spyPoints };
+
+  // Compact legend chips (eye + name + CAGR) above the chart. Also re-renders
+  // the open side panel if any (so its log table stays in sync with sliders).
+  refreshAllLegends();
 
   if (typeof refreshAnalytics === 'function') refreshAnalytics();
 }

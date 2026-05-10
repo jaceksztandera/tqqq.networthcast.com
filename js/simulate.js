@@ -1,28 +1,4 @@
 
-function simulateBhTqqq(initial, monthly, annualRaise, entryIdx, exitIdx, qData) {
-  qData = qData || quarterlyData;
-  const qSlice = qData.slice(entryIdx, exitIdx + 1);
-  if (qSlice.length < 1) return [];
-  const startYear = parseInt(qSlice[0][0].substring(0, 4));
-  let bhShares = initial / qSlice[0][1];
-  let bhPrevQ = qSlice[0][0];
-  const points = [];
-  for (let qi = 0; qi < qSlice.length; qi++) {
-    const [qDate, qPrice] = qSlice[qi];
-    if (qi > 0) {
-      const yr = parseInt(qDate.substring(0, 4));
-      const bhMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
-      for (const [mDate, mPrice] of monthlyData) {
-        if (mDate > bhPrevQ && mDate <= qDate) {
-          bhShares += bhMonthly / mPrice;
-        }
-      }
-    }
-    points.push(bhShares * qPrice);
-    bhPrevQ = qDate;
-  }
-  return points;
-}
 // Compute trailing "$1 invested N years ago" B&H-TQQQ ÷ simplified-9sig ratio (×100)
 // at the given index in quarterlyData. Returns null if there isn't enough history.
 function trailingShadowRatio(globalIdx, yearsBack) {

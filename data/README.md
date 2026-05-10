@@ -1,6 +1,6 @@
 # Long-history TQQQ, QQQ, and SPY price data
 
-This folder contains daily closing-price series for **TQQQ, QQQ, and SPY** stretching back **decades before any of these ETFs actually existed**. They power the [TQQQ Strategies Simulator](https://9sig.networthcast.com), and they're published here so anyone can grab them and run their own backtests without reinventing the synthesis work.
+This folder contains daily closing-price series for **TQQQ, QQQ, and SPY** stretching back **decades before any of these ETFs actually existed**. They power the [Strategies Simulator](https://9sig.networthcast.com), and they're published here so anyone can grab them and run their own backtests without reinventing the synthesis work.
 
 ## Why these files exist
 
