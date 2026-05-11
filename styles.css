@@ -66,6 +66,21 @@
      to nothing. Most tablet-mode fixes belong here. */
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; }
+    /* Reorder the chart panel so the chart canvas comes first and the
+       legend chips sit below it — desktop has them above the chart, but on
+       narrow screens it reads better with the visualization first and the
+       toggles/metrics underneath. */
+    .right-col > .panel {
+      display: flex;
+      flex-direction: column;
+    }
+    .right-col > .panel > .chart-container { order: 1; }
+    .right-col > .panel > #chart-legend {
+      order: 2;
+      margin: 12px 0 0;
+    }
+    .right-col > .panel > .control-group { order: 3; }
+    .right-col > .panel > div:last-child { order: 4; }
     .header { gap: 8px; margin-bottom: 14px; }
     /* Pull share button out of absolute and stack it below the title. */
     #share-btn {
@@ -1379,7 +1394,11 @@
   #custom-tooltip {
     display: none;
     position: absolute;
-    pointer-events: none;
+    /* Pointer events on so the close × button is clickable. On desktop the
+       tooltip ignores its own pointer events for hover purposes (Chart.js
+       hover is driven by canvas events, not tooltip ones) so allowing
+       pointer events here doesn't interfere with hover behavior. */
+    pointer-events: auto;
     background: #141c2b;
     border: 1px solid #2a3550;
     border-radius: 10px;
@@ -1387,6 +1406,36 @@
     z-index: 20;
     min-width: 220px;
     box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  /* Close × inside the main-chart tooltip. Hidden on desktop (hover/leave
+     handles dismissal automatically) and shown on touch / narrow viewports
+     where the tooltip stays pinned until explicitly dismissed. */
+  #custom-tooltip .tt-close {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  #custom-tooltip .tt-close:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  @media (hover: none), (max-width: 600px) {
+    #custom-tooltip .tt-close { display: inline-flex; }
+    /* Reserve right padding on the date row so the close button doesn't
+       collide with it. */
+    #custom-tooltip .tt-date { padding-right: 30px; }
   }
 
   .tt-date {

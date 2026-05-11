@@ -501,10 +501,22 @@ function render() {
   // Match the borderDash on the corresponding chart dataset; null = solid.
   const lineDashes = [null, [2,2], [6,3], [8,4], [6,3], [4,4], null, [3,3], null];
 
+  // Touch / coarse-pointer detection — once at chart creation time. On those
+  // devices Chart.js's tap-to-show tooltip is followed by an immediate
+  // opacity=0 dismissal as soon as the finger lifts, so we make the tooltip
+  // sticky and require an explicit close (× button or tap outside) instead.
+  const isTouchChart = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+  let chartTooltipPinned = false;
+
   const externalTooltip = (context) => {
     const { chart: c, tooltip } = context;
     const el = document.getElementById('custom-tooltip');
-    if (tooltip.opacity === 0) { el.style.display = 'none'; return; }
+    if (tooltip.opacity === 0) {
+      if (isTouchChart && chartTooltipPinned) return; // stay open until dismissed
+      el.style.display = 'none';
+      return;
+    }
+    if (isTouchChart) chartTooltipPinned = true;
 
     const idx = tooltip.dataPoints?.[0]?.dataIndex;
     if (idx == null) return;
@@ -549,7 +561,7 @@ function render() {
       `;
     }).join('');
 
-    el.innerHTML = `<div class="tt-date">${qLabel(date)}</div>${rows}`;
+    el.innerHTML = `<button class="tt-close" type="button" aria-label="Close" data-tt-close>&times;</button><div class="tt-date">${qLabel(date)}</div>${rows}`;
 
     el.style.display = 'block';
     const panelRect = c.canvas.closest('.panel').getBoundingClientRect();
@@ -561,6 +573,31 @@ function render() {
     el.style.left = left + 'px';
     el.style.top = top + 'px';
   };
+
+  // Wire the tooltip's close button and outside-tap dismissal once. The
+  // tooltip element is stable so we can attach listeners here at chart
+  // creation time rather than on every render.
+  const ttEl = document.getElementById('custom-tooltip');
+  const dismissChartTooltip = () => {
+    chartTooltipPinned = false;
+    if (ttEl) ttEl.style.display = 'none';
+  };
+  if (ttEl && !ttEl._closeWired) {
+    ttEl._closeWired = true;
+    ttEl.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('[data-tt-close]')) {
+        dismissChartTooltip();
+      }
+    });
+    if (isTouchChart) {
+      document.addEventListener('click', (e) => {
+        if (!chartTooltipPinned) return;
+        if (e.target.closest('#custom-tooltip')) return;
+        if (e.target.closest('#mainChart'))      return;
+        dismissChartTooltip();
+      });
+    }
+  }
 
   // Plugin: draw end-of-line labels directly on canvas
   const endLabelPlugin = {
