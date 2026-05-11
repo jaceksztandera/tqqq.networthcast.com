@@ -6,6 +6,17 @@ function qLabel(dateStr) {
   return q + ' ' + y;
 }
 
+// Display name for the 9sig strategy — derived from the current signal-line
+// growth selector (e.g. "9sig", "15sig"). Used by chart labels, analytics
+// buttons, log-table headers, and adaptive-transition badges so a user who
+// picks 15% quarterly growth sees the strategy named "15sig" throughout.
+// The internal key stays '9sig' so URL params and saved state are stable.
+function nineSigName() {
+  const v = (document.getElementById('select-9sig-growth') || {}).value;
+  const n = parseInt(v, 10);
+  return (Number.isFinite(n) ? n : 9) + 'sig';
+}
+
 // Logarithmic slider for initial investment: slider 0-1000 maps to $0-$100M
 // slider 0 = $0, slider 1-1000 = log scale from $100 to $100M
 function sliderToInitial(s) {
@@ -41,7 +52,11 @@ function initialToSlider(v) {
 function sliderToRate(s) {
   if (s <= 0) return 0;
   const norm = Math.max(0, Math.min(1, s / 1000));
-  return norm * norm * 100;
+  // Snap to 0.5% increments at the function boundary so every consumer
+  // (chart, analytics, share URL, displayed value) sees the same clean
+  // value — without this, the integer slider position round-trips back
+  // through the quadratic curve as a fractional rate like 5.52%.
+  return Math.round(norm * norm * 100 * 2) / 2;
 }
 function rateToSlider(r) {
   if (r <= 0) return 0;

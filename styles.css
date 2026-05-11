@@ -1131,8 +1131,11 @@
   .legend-chip .legend-metric-value.positive { color: var(--green); }
   .legend-chip .legend-metric-value.negative { color: var(--red); }
   .legend-chip.legend-hidden {
-    opacity: 0.35;
-    background: rgba(30, 42, 63, 0.2);
+    opacity: 0.15;
+    background: rgba(30, 42, 63, 0.15);
+  }
+  .legend-chip.legend-hidden:hover {
+    opacity: 0.45;
   }
   .legend-chip.legend-hidden .legend-name {
     text-decoration: line-through;

@@ -17,13 +17,175 @@
 // optimization keeps build time linear in years, so even at the maximum
 // triangular cell count (~years²/2) the build stays fast.
 
-const STRATEGY_LABELS = {
-  'adaptive': 'Adaptive',
-  '9sig':     '9sig',
-  'bh-tqqq':  'B&H TQQQ',
-  'bh-qqq':   'B&H QQQ',
-  'bh-spy':   'B&H SPY',
+// === STRATEGY_REGISTRY ====================================================
+// Single source of truth for everything strategy-shaped: label, where its
+// per-quarter array lives in a `simulate()` result, how to project a scalar
+// value out of one of those records, whether it skips the entry quarter
+// (BH variants do — they start at qi=1), and the earliest quarterly index
+// for which it has usable data (used to clamp the date-range slider and the
+// heatmap when a limited-history strategy is active).
+//
+// Adding a new strategy is one row here + the simulate logic. No more
+// editing six parallel switch statements.
+//
+// Notes on the points shape per strategy:
+//   '9sig'      → sim.log[i].total           (also adopts log's other fields)
+//   'bh-*'      → sim.{bh,qqq,spy,soxl}Points[i].value, skips entry quarter
+//   'sma'       → sim.smaPoints[i].value, includes entry, has .state
+//   'adaptive'  → sim.adaptivePoints[i].value, includes entry, has .state
+// Map a side-panel underlying selector to its earliest valid quarterly
+// index. TQQQ / QQQ5 are synthesized to 1938; SOXL only exists from 1994.
+// Used by 9sig + Adaptive + SMA earliestQIdxFn entries below.
+function _earliestQIdxForUnderlyingSelect(selectId) {
+  const v = (document.getElementById(selectId) || {}).value || 'tqqq';
+  if (v !== 'soxl') return 0;
+  if (typeof quarterlyData === 'undefined' || !quarterlyData) return 0;
+  for (let q = 0; q < quarterlyData.length; q++) {
+    if ((quarterlyData[q][4] || 0) > 0) return q;
+  }
+  return 0;
+}
+
+const STRATEGY_REGISTRY = {
+  '9sig':    { label: '9sig',     pointsKey: 'log',            valueOf: (p) => p.total, prependStart: false,
+               labelFn: () => (typeof nineSigName === 'function') ? nineSigName() : '9sig',
+               earliestQIdxFn: () => _earliestQIdxForUnderlyingSelect('select-9sig-underlying') },
+  'bh-tqqq': { label: 'B&H TQQQ', pointsKey: 'bhPoints',       valueOf: (p) => p.value, prependStart: true  },
+  'bh-qqq':  { label: 'B&H QQQ',  pointsKey: 'qqqPoints',      valueOf: (p) => p.value, prependStart: true  },
+  'bh-spy':  { label: 'B&H SPY',  pointsKey: 'spyPoints',      valueOf: (p) => p.value, prependStart: true  },
+  'bh-soxl': { label: 'B&H SOXL', pointsKey: 'soxlPoints',     valueOf: (p) => p.value, prependStart: true,
+               firstNonZeroCol: 4 /* quarterlyData column index — SOXL only starts 1994 */ },
+  'bh-qqq5': { label: 'B&H QQQ5', pointsKey: 'qqq5Points',     valueOf: (p) => p.value, prependStart: true  },
+  'sma':     { label: 'SMA',      pointsKey: 'smaPoints',      valueOf: (p) => p.value, prependStart: false,
+               // SMA depends on (a) the current asset+window — earliest valid
+               // quarter is when the SMA series first becomes non-null — and
+               // (b) the chosen underlying — SOXL only has data from 1994.
+               earliestQIdxFn: () => {
+                 let minQ = 0;
+                 if (typeof smaAtMonthlyByKey !== 'undefined' && smaAtMonthlyByKey
+                     && typeof monthlyData !== 'undefined' && monthlyData
+                     && typeof quarterlyData !== 'undefined' && quarterlyData) {
+                   const a = (document.getElementById('select-sma-asset')  || {}).value || 'qqq';
+                   const w = +((document.getElementById('select-sma-window') || {}).value) || 200;
+                   const series = smaAtMonthlyByKey[a + '_' + w];
+                   if (series) {
+                     let firstM = -1;
+                     for (let i = 0; i < series.length; i++) if (series[i] != null) { firstM = i; break; }
+                     if (firstM >= 0) {
+                       const date = monthlyData[firstM][0];
+                       for (let q = 0; q < quarterlyData.length; q++) if (quarterlyData[q][0] >= date) { minQ = q; break; }
+                     }
+                   }
+                 }
+                 // Underlying constraint: holding SOXL requires SOXL data (1994+).
+                 const ul = (document.getElementById('select-sma-underlying') || {}).value || 'tqqq';
+                 if (ul === 'soxl' && quarterlyData) {
+                   for (let q = 0; q < quarterlyData.length; q++) {
+                     if ((quarterlyData[q][4] || 0) > 0) { if (q > minQ) minQ = q; break; }
+                   }
+                 }
+                 return minQ;
+               } },
+  'adaptive':{ label: 'Adaptive (WIP)', pointsKey: 'adaptivePoints', valueOf: (p) => p.value, prependStart: false,
+               earliestQIdxFn: () => _earliestQIdxForUnderlyingSelect('select-9sig-underlying') },
 };
+
+// Earliest quarterly index where each strategy has usable history. Computed
+// once after quarterlyData loads (called from init). Strategies without a
+// `firstNonZeroCol` start at index 0.
+let earliestQIdxByStrategy = {};
+
+function recomputeEarliestQIdx() {
+  earliestQIdxByStrategy = {};
+  if (typeof quarterlyData === 'undefined' || !quarterlyData) return;
+  for (const [key, spec] of Object.entries(STRATEGY_REGISTRY)) {
+    if (spec.firstNonZeroCol == null) {
+      earliestQIdxByStrategy[key] = 0;
+      continue;
+    }
+    let idx = 0;
+    for (let i = 0; i < quarterlyData.length; i++) {
+      if ((quarterlyData[i][spec.firstNonZeroCol] || 0) > 0) { idx = i; break; }
+    }
+    earliestQIdxByStrategy[key] = idx;
+  }
+}
+
+// Resolve a strategy's earliest valid quarterly index. Strategies whose
+// earliest changes with current UI state (e.g. SMA with its asset+window
+// selectors) provide an `earliestQIdxFn`; static ones use the precomputed
+// `earliestQIdxByStrategy` map.
+function earliestQIdxOf(key) {
+  const spec = STRATEGY_REGISTRY[key];
+  if (!spec) return 0;
+  if (typeof spec.earliestQIdxFn === 'function') return spec.earliestQIdxFn();
+  return earliestQIdxByStrategy[key] || 0;
+}
+
+// Lowest entry index allowed given which strategy datasets are currently
+// visible on the main chart. Used to clamp the date-range slider so the
+// chart doesn't show "all zeros until 1994" when SOXL is enabled.
+//
+// `extraKeys` lets the heatmap pass in its currently-selected strategy and
+// baseline without those needing to be visible on the chart.
+function effectiveEntryMinQIdx(extraKeys) {
+  let min = 0;
+  if (typeof chart !== 'undefined' && chart) {
+    for (const [keyStr, idx] of Object.entries(STRATEGY_KEY_TO_DATASET_IDX)) {
+      if (!chart.isDatasetVisible(idx)) continue;
+      const e = earliestQIdxOf(keyStr);
+      if (e > min) min = e;
+    }
+  }
+  if (Array.isArray(extraKeys)) {
+    for (const k of extraKeys) {
+      const e = earliestQIdxOf(k);
+      if (e > min) min = e;
+    }
+  }
+  return min;
+}
+
+// Map analytics-strategy keys back to chart dataset indices (used by the
+// data-range clamping logic in chart.js).
+const STRATEGY_KEY_TO_DATASET_IDX = {
+  '9sig':    0,
+  'bh-tqqq': 2,
+  'bh-qqq':  3,
+  'bh-spy':  4,
+  'bh-soxl': 9,
+  'adaptive':8,
+  'sma':     10,
+  'bh-qqq5': 11,
+};
+
+// Reverse map. Cheap to build at module load.
+const DATASET_IDX_TO_STRATEGY_KEY = Object.fromEntries(
+  Object.entries(STRATEGY_KEY_TO_DATASET_IDX).map(([k, v]) => [v, k])
+);
+
+// Backwards-compat label map. Existing callers refer to STRATEGY_LABELS;
+// it's a Proxy so reads always re-run the registry's labelFn (if any),
+// which lets dynamic names like "15sig" stay live as the user toggles.
+const STRATEGY_LABELS = new Proxy({}, {
+  get(_, k) {
+    const s = STRATEGY_REGISTRY[k];
+    if (!s) return undefined;
+    return (typeof s.labelFn === 'function') ? s.labelFn() : s.label;
+  },
+});
+
+// Update static "9sig" labels in the analytics modal (buttons + dropdown
+// option). The metric pill row already re-reads on every render, so this
+// only handles the strategy/baseline pickers whose textContent lives in
+// raw HTML. Safe to call any time; no-op if elements aren't mounted yet.
+function refresh9sigDisplayLabels() {
+  const nm = (typeof nineSigName === 'function') ? nineSigName() : '9sig';
+  const btn = document.querySelector('#analytics-strategy-options button[data-strat="9sig"]');
+  if (btn) btn.textContent = nm;
+  const opt = document.querySelector('#analytics-baseline option[value="9sig"]');
+  if (opt) opt.textContent = nm;
+}
 
 let analyticsStrategy = 'adaptive';
 let analyticsBaseline = 'compounded';
@@ -54,66 +216,57 @@ function parseAmount(str) {
   return parseFloat(m[1]) * mult;
 }
 
+// Generic per-strategy accessors driven by STRATEGY_REGISTRY. Each strategy
+// declares which key on the simulate() result holds its array and how to
+// project a scalar value off a record; these helpers do the rest.
+function _strategyArray(sim, key) {
+  const spec = STRATEGY_REGISTRY[key];
+  return spec && sim ? sim[spec.pointsKey] : null;
+}
+
 // Pull a baseline value out of a simulate() result for the chosen divisor.
 // 'compounded' is the cash-only baseline plotted as "Invested Compounded";
-// the others mirror strategyFinalValue.
+// 'custom' / 'custom-pct' are special-cased; everything else delegates to
+// the strategy registry.
 function baselineFinalValue(sim, key) {
-  switch (key) {
-    case 'custom':    return analyticsCustomTarget;
-    case 'custom-pct': return 0; // handled separately at color time (cell-to-cell comparison)
-    case '9sig':      { const a = sim.log;           return a && a.length ? a[a.length - 1].total : 0; }
-    case 'bh-tqqq':   { const a = sim.bhPoints;      return a && a.length ? a[a.length - 1].value : 0; }
-    case 'bh-qqq':    { const a = sim.qqqPoints;     return a && a.length ? a[a.length - 1].value : 0; }
-    case 'bh-spy':    { const a = sim.spyPoints;     return a && a.length ? a[a.length - 1].value : 0; }
-    case 'adaptive':  { const a = sim.adaptivePoints;return a && a.length ? a[a.length - 1].value : 0; }
-    case 'compounded':
-    default:          { const a = sim.log;           return a && a.length ? a[a.length - 1].investedCompounded : 0; }
+  if (key === 'custom')     return analyticsCustomTarget;
+  if (key === 'custom-pct') return 0; // handled separately at color time (cell-to-cell comparison)
+  if (key === 'compounded' || !STRATEGY_REGISTRY[key]) {
+    const a = sim && sim.log;
+    return a && a.length ? a[a.length - 1].investedCompounded : 0;
   }
+  return strategyFinalValue(sim, key);
 }
 
 // Same as baselineFinalValue but reads the value at a specific quarter
 // offset within a sim (used by the heatmap's per-row optimization where one
 // simulate() covers many cells, each at a different exit quarter).
 function baselineValueAtOffset(sim, key, offset) {
-  switch (key) {
-    case 'custom':     return analyticsCustomTarget;
-    case 'custom-pct': return 0;
-    case '9sig':       { const a = sim.log;           return a && a[offset] ? a[offset].total : 0; }
-    case 'bh-tqqq':    { const a = sim.bhPoints;      return a && a[offset] ? a[offset].value : 0; }
-    case 'bh-qqq':     { const a = sim.qqqPoints;     return a && a[offset] ? a[offset].value : 0; }
-    case 'bh-spy':     { const a = sim.spyPoints;     return a && a[offset] ? a[offset].value : 0; }
-    case 'adaptive':   { const a = sim.adaptivePoints;return a && a[offset] ? a[offset].value : 0; }
-    case 'compounded':
-    default:           { const a = sim.log;           return a && a[offset] ? a[offset].investedCompounded : 0; }
+  if (key === 'custom')     return analyticsCustomTarget;
+  if (key === 'custom-pct') return 0;
+  if (key === 'compounded' || !STRATEGY_REGISTRY[key]) {
+    const a = sim && sim.log;
+    return a && a[offset] ? a[offset].investedCompounded : 0;
   }
+  return strategyValueAtOffset(sim, key, offset);
 }
 
 // Same as strategyFinalValue but reads the value at a specific quarter
 // offset within a sim. Mirrors the per-cell sim's "final" semantics for the
 // heatmap's row-shared sim.
 function strategyValueAtOffset(sim, strat, offset) {
-  switch (strat) {
-    case '9sig':     { const a = sim.log;            return a && a[offset] ? a[offset].total : 0; }
-    case 'bh-tqqq':  { const a = sim.bhPoints;       return a && a[offset] ? a[offset].value : 0; }
-    case 'bh-qqq':   { const a = sim.qqqPoints;      return a && a[offset] ? a[offset].value : 0; }
-    case 'bh-spy':   { const a = sim.spyPoints;      return a && a[offset] ? a[offset].value : 0; }
-    case 'adaptive':
-    default:         { const a = sim.adaptivePoints; return a && a[offset] ? a[offset].value : 0; }
-  }
+  const spec = STRATEGY_REGISTRY[strat] || STRATEGY_REGISTRY['adaptive'];
+  const arr = sim && sim[spec.pointsKey];
+  return arr && arr[offset] ? spec.valueOf(arr[offset]) : 0;
 }
 
 // For a row-shared sim, return the strategy's full per-quarter value array
 // (so we can compute a max-drawdown prefix once and answer every cell's
 // drawdown in O(1)).
 function strategyValueArray(sim, strat) {
-  switch (strat) {
-    case '9sig':     return sim.log           ? sim.log.map(l => l.total)            : [];
-    case 'bh-tqqq':  return sim.bhPoints      ? sim.bhPoints.map(p => p.value)       : [];
-    case 'bh-qqq':   return sim.qqqPoints     ? sim.qqqPoints.map(p => p.value)      : [];
-    case 'bh-spy':   return sim.spyPoints     ? sim.spyPoints.map(p => p.value)      : [];
-    case 'adaptive':
-    default:         return sim.adaptivePoints? sim.adaptivePoints.map(p => p.value) : [];
-  }
+  const spec = STRATEGY_REGISTRY[strat] || STRATEGY_REGISTRY['adaptive'];
+  const arr = sim && sim[spec.pointsKey];
+  return arr ? arr.map(spec.valueOf) : [];
 }
 
 // Prefix max-drawdown: out[i] = peak-to-trough decline observed across
@@ -139,42 +292,15 @@ function computeMaxDDPrefix(series) {
 
 // Pull the chosen strategy's final value out of a simulate() result.
 function strategyFinalValue(sim, strat) {
-  switch (strat) {
-    case '9sig': {
-      const log = sim.log;
-      return log && log.length ? log[log.length - 1].total : 0;
-    }
-    case 'bh-tqqq': {
-      const a = sim.bhPoints;
-      return a && a.length ? a[a.length - 1].value : 0;
-    }
-    case 'bh-qqq': {
-      const a = sim.qqqPoints;
-      return a && a.length ? a[a.length - 1].value : 0;
-    }
-    case 'bh-spy': {
-      const a = sim.spyPoints;
-      return a && a.length ? a[a.length - 1].value : 0;
-    }
-    case 'adaptive':
-    default: {
-      const a = sim.adaptivePoints;
-      return a && a.length ? a[a.length - 1].value : 0;
-    }
-  }
+  const spec = STRATEGY_REGISTRY[strat] || STRATEGY_REGISTRY['adaptive'];
+  const arr = sim && sim[spec.pointsKey];
+  return arr && arr.length ? spec.valueOf(arr[arr.length - 1]) : 0;
 }
 
 // Extract the per-quarter value series of a strategy from a simulate() result.
 // Used to compute max drawdown.
 function strategySeries(sim, strat) {
-  switch (strat) {
-    case '9sig':     return sim.log           ? sim.log.map(l => l.total)            : [];
-    case 'bh-tqqq':  return sim.bhPoints      ? sim.bhPoints.map(p => p.value)       : [];
-    case 'bh-qqq':   return sim.qqqPoints     ? sim.qqqPoints.map(p => p.value)      : [];
-    case 'bh-spy':   return sim.spyPoints     ? sim.spyPoints.map(p => p.value)      : [];
-    case 'adaptive':
-    default:         return sim.adaptivePoints? sim.adaptivePoints.map(p => p.value) : [];
-  }
+  return strategyValueArray(sim, strat);
 }
 
 // Max drawdown of a value series: largest peak-to-trough decline expressed as
@@ -398,8 +524,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   if (!e.target || !e.target.classList || !e.target.classList.contains('metric-select')) return;
   const key = e.target.dataset.metricKey;
-  const value = parseFloat(e.target.value);
-  if (!Number.isFinite(value)) return;
+  const rawValue = e.target.value;
   const fireInput = (id, sliderValue) => {
     const el = document.getElementById(id);
     el.value = String(sliderValue);
@@ -410,14 +535,20 @@ document.addEventListener('change', (e) => {
     el.value = String(val);
     el.dispatchEvent(new Event('change', { bubbles: true }));
   };
+  // Strategy-specific pills (tu/td/tw/sa/sw/...) dispatch through the def map.
+  const def = STRATEGY_METRIC_DEFS[key];
+  if (def) {
+    fireChange(def.elementId, def.kind === 'string' ? rawValue : parseFloat(rawValue));
+    buildHeatmap();
+    return;
+  }
+  const value = parseFloat(rawValue);
+  if (!Number.isFinite(value)) return;
   switch (key) {
     case 'initial': fireInput('slider-initial', initialToSlider(value)); break;
     case 'monthly': fireInput('slider-monthly', value); break;
     case 'raise':   fireInput('slider-raise',   value); break;
     case 'rate':    fireInput('slider-rate',    rateToSlider(value)); break;
-    case 'tu':      fireChange('select-tqqq-above',  value); break;
-    case 'td':      fireChange('select-tqqq-below',  value); break;
-    case 'tw':      fireChange('select-tqqq-window', value); break;
   }
   buildHeatmap();
 });
@@ -602,14 +733,59 @@ const METRIC_OPTS = {
   tu:      [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.2, 2.4, 2.5, 2.7, 3.0, 3.3, 3.5, 4.0, 4.5, 5.0],
   td:      [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.3, 2.5, 3.0],
   tw:      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 18, 20, 22, 25, 28, 30],
+  sa:      ['qqq', 'spy'],
+  sw:      [100, 150, 200, 250],
+  // 9sig + Adaptive: which leveraged ETF to trade, and signal-line growth.
+  nu:      ['tqqq', 'qqq5', 'soxl'],
+  ng:      [6, 7, 8, 9, 10, 12, 15, 18, 20, 25],
+  // 9sig + Adaptive rule customization:
+  //   nc = 30-down no-sell drop % below 2-yr high (≥100 effectively disables)
+  //   ns = spike-reset trigger (quarterly gain %; 0 disables)
+  nc:      [30, 60, 90, 120, 150, 180],
+  ns:      [0, 50, 75, 100, 150, 200, 300, 400],
+  // SMA: which leveraged ETF the strategy holds when the signal is "in".
+  su:      ['tqqq', 'qqq5', 'soxl'],
+};
+
+// Per-metric definition for the analytics-modal settings bar. The bar
+// auto-renders pills for whichever metrics are currently relevant (see
+// STRATEGY_METRICS below). Each def says:
+//   - which page-level <select>/<input> mirrors this metric (so the change
+//     handler can dispatch back to the real control),
+//   - how to format the option labels,
+//   - whether the value is numeric (parsed with parseFloat) or a string
+//     ('qqq'/'spy' style).
+const STRATEGY_METRIC_DEFS = {
+  tu: { label: '→ 9sig',     elementId: 'select-tqqq-above',     fmt: x => `×${x}`,                 kind: 'number' },
+  td: { label: '→ TQQQ',     elementId: 'select-tqqq-below',     fmt: x => `×${x}`,                 kind: 'number' },
+  tw: { label: 'Window',     elementId: 'select-tqqq-window',    fmt: x => `${x}y`,                 kind: 'number' },
+  sa: { label: 'Signal',     elementId: 'select-sma-asset',      fmt: v => String(v).toUpperCase(), kind: 'string' },
+  sw: { label: 'SMA window', elementId: 'select-sma-window',     fmt: x => `${x}d`,                 kind: 'number' },
+  su: { label: 'Holds',      elementId: 'select-sma-underlying', fmt: v => String(v).toUpperCase(), kind: 'string' },
+  nu: { label: 'Trades',     elementId: 'select-9sig-underlying',fmt: v => String(v).toUpperCase(), kind: 'string' },
+  ng: { label: 'Signal +/q', elementId: 'select-9sig-growth',    fmt: x => `${x}%`,                 kind: 'number' },
+  nc: { label: '30-down',    elementId: 'select-9sig-crashdrop', fmt: x => x >= 100 ? 'off' : `-${x}%`, kind: 'number' },
+  ns: { label: 'Spike',      elementId: 'select-9sig-spike',     fmt: x => x === 0 ? 'off' : `+${x}%/q`, kind: 'number' },
+};
+
+// Which metric keys each strategy exposes in the analytics settings bar.
+// Strategies without an entry get no extra pills (the base initial / monthly /
+// raise / rate row still renders unconditionally).
+const STRATEGY_METRICS = {
+  '9sig':     ['nu', 'ng', 'nc', 'ns'],
+  'adaptive': ['nu', 'ng', 'nc', 'ns', 'tu', 'td', 'tw'],
+  'sma':      ['su', 'sa', 'sw'],
 };
 
 function metricSelect(key, label, current, fmt, dim) {
+  const def = STRATEGY_METRIC_DEFS[key];
+  const isString = def && def.kind === 'string';
   const base = METRIC_OPTS[key].slice();
-  if (!base.some(v => Math.abs(v - current) < 1e-9)) base.push(current);
-  base.sort((a, b) => a - b);
+  const same = (a, b) => isString ? String(a) === String(b) : Math.abs(a - b) < 1e-9;
+  if (current != null && !base.some(v => same(v, current))) base.push(current);
+  base.sort((a, b) => isString ? String(a).localeCompare(String(b)) : a - b);
   const optionsHtml = base.map(v =>
-    `<option value="${v}"${Math.abs(v - current) < 1e-9 ? ' selected' : ''}>${fmt(v)}</option>`
+    `<option value="${v}"${current != null && same(v, current) ? ' selected' : ''}>${fmt(v)}</option>`
   ).join('');
   const cls = dim ? 'metric metric--dim' : 'metric';
   return `<span class="${cls}" title="${dim ? 'Not currently affecting the result' : ''}">${label} <select class="metric-select" data-metric-key="${key}">${optionsHtml}</select></span>`;
@@ -619,26 +795,16 @@ function renderAnalyticsMetrics(initial, monthly, annualRaise, rate, tqqqAboveMu
   const m = document.getElementById('analytics-metrics');
   if (!m) return;
   const pct = (x) => (x % 1 === 0 ? x.toFixed(0) : x.toFixed(1)) + '%';
-  // A param is active when EITHER the chosen strategy OR the baseline it's
-  // compared against actually uses it. Otherwise dim — visible but signaled
-  // as not affecting the result.
-  //   Cash interest rate — used by 9sig & Adaptive (they hold cash that
-  //     earns this rate) AND by the "Compounded Cash" baseline (which IS
-  //     the cash-only growth line). B&H strategies + B&H baselines + Custom
-  //     Target + Custom Growth ignore it. Also dim when there's no cash
-  //     flow at all (initial = 0 AND monthly = 0).
-  //   Adaptive params (→9sig / →TQQQ / Window) — only relevant when
-  //     Adaptive drives the strategy itself OR the comparison baseline.
-  const stratUsesCash    = (strategy === '9sig' || strategy === 'adaptive');
-  const baselineUsesCash = (analyticsBaseline === 'compounded' || analyticsBaseline === '9sig' || analyticsBaseline === 'adaptive');
+  // Cash interest rate — used by 9sig, Adaptive, and the SMA strategy (each
+  // parks money in cash that earns this rate) AND by the "Compounded Cash"
+  // baseline. B&H strategies/baselines + Custom Target + Custom Growth
+  // ignore it. Dimmed when there's no cash flow at all (init=0 AND monthly=0).
+  const stratUsesCash    = (strategy === '9sig' || strategy === 'adaptive' || strategy === 'sma');
+  const baselineUsesCash = (analyticsBaseline === 'compounded' || analyticsBaseline === '9sig' || analyticsBaseline === 'adaptive' || analyticsBaseline === 'sma');
   const cashActive       = stratUsesCash || baselineUsesCash;
-  const adaptiveActive   = (strategy === 'adaptive' || analyticsBaseline === 'adaptive');
   const dimInitial       = initial <= 0;
   const dimMonthly       = monthly <= 0;
   const dimRaise         = monthly <= 0 || annualRaise <= 0;
-  // Cash pill: hide entirely when neither strategy nor baseline uses cash
-  // (it's pure noise then). Show but dim if cash is in play but there's no
-  // cash flow yet (initial = 0 AND monthly = 0).
   const dimRate          = (initial <= 0 && monthly <= 0);
   const items = [
     metricSelect('initial', 'Initial', initial, fmtFull, dimInitial),
@@ -648,12 +814,20 @@ function renderAnalyticsMetrics(initial, monthly, annualRaise, rate, tqqqAboveMu
   if (cashActive) {
     items.push(metricSelect('rate', 'Cash interest rate', rate * 100, pct, dimRate));
   }
-  if (adaptiveActive) {
-    items.push(
-      metricSelect('tu', '→ 9sig', tqqqAboveMult, x => `×${x}`, false),
-      metricSelect('td', '→ TQQQ', tqqqBelowMult, x => `×${x}`, false),
-      metricSelect('tw', 'Window', tqqqWindow,   x => `${x}y`,  false),
-    );
+
+  // Strategy-specific pills, driven by STRATEGY_METRICS. Show metrics for
+  // whichever of (strategy, baseline) actually use them. The current value
+  // is read off the corresponding page <select>/<input>.
+  const relevant = new Set();
+  for (const k of (STRATEGY_METRICS[strategy] || []))         relevant.add(k);
+  for (const k of (STRATEGY_METRICS[analyticsBaseline] || [])) relevant.add(k);
+  for (const k of relevant) {
+    const def = STRATEGY_METRIC_DEFS[k];
+    if (!def) continue;
+    const el = document.getElementById(def.elementId);
+    if (!el) continue;
+    const cur = def.kind === 'string' ? el.value : +el.value;
+    items.push(metricSelect(k, def.label, cur, def.fmt, false));
   }
   m.innerHTML = items.join('');
 }
@@ -727,6 +901,8 @@ const SPIRAL_ASSET_FOR_STRATEGY = {
   'bh-spy':   'spy',
   'bh-qqq':   'qqq',
   'bh-tqqq':  'tqqq',
+  'bh-soxl':  'soxl',
+  'sma':      'tqqq',
   '9sig':     'tqqq',
   'adaptive': 'tqqq',
 };
@@ -741,17 +917,21 @@ const SPIRAL_ASSET_FOR_STRATEGY = {
 // otherwise per-year YoY math downstream would use Q1 of year Y as Y's start
 // instead of Q4 of (Y-1), reading as ~9-month growth instead of full-year.
 function strategyDateValues(sim, strat) {
-  if (strat === '9sig')     return sim.log ? sim.log.map(l => ({ date: l.date, value: l.total })) : [];
-  if (strat === 'adaptive') return sim.adaptivePoints || [];
-  const raw = strat === 'bh-tqqq' ? sim.bhPoints
-            : strat === 'bh-qqq'  ? sim.qqqPoints
-            : strat === 'bh-spy'  ? sim.spyPoints
-                                  : null;
-  if (!raw || !raw.length) return [];
-  if (sim.log && sim.log.length && raw[0].date !== sim.log[0].date) {
-    return [{ date: sim.log[0].date, value: sim.log[0].total }, ...raw];
+  const spec = STRATEGY_REGISTRY[strat] || STRATEGY_REGISTRY['adaptive'];
+  const arr = sim && sim[spec.pointsKey];
+  if (!arr || !arr.length) return [];
+  // Normalize each record to { date, value, ...optional state }.
+  const pts = arr.map(p => {
+    const out = { date: p.date, value: spec.valueOf(p) };
+    if (p.state != null) out.state = p.state;
+    return out;
+  });
+  // BH variants skip qi=0 in simulate(); prepend the entry-quarter snapshot
+  // so per-year YoY math downstream reads as full years.
+  if (spec.prependStart && sim.log && sim.log.length && pts[0].date !== sim.log[0].date) {
+    return [{ date: sim.log[0].date, value: sim.log[0].total }, ...pts];
   }
-  return raw;
+  return pts;
 }
 
 // Quarterly (date, value) pairs for the heatmap's currently selected
@@ -760,7 +940,7 @@ function strategyDateValues(sim, strat) {
 // 'custom-pct' (per-cell flat target derived from prior cell × (1+pct)).
 function baselineDateValues(sim, key, cellBaselineVal, stratSeries) {
   if (!sim) return [];
-  if (key === '9sig' || key === 'adaptive' || key === 'bh-tqqq' || key === 'bh-qqq' || key === 'bh-spy') {
+  if (key === '9sig' || key === 'adaptive' || key === 'bh-tqqq' || key === 'bh-qqq' || key === 'bh-spy' || key === 'bh-soxl' || key === 'sma') {
     return strategyDateValues(sim, key);
   }
   if (key === 'compounded') {
@@ -797,6 +977,54 @@ let _spiralPoints    = null;
 let _perYearSims    = new Map();
 let _perYearSimsKey = null;
 
+// Read the per-strategy underlying selectors and the 9sig signal-growth
+// selector off the side-panel UI. Mirror of the helper in chart.js's render().
+function _underlyingAndGrowth() {
+  const ulSel = (id) => {
+    const v = (document.getElementById(id) || {}).value;
+    return v === 'qqq5' ? 5 : (v === 'soxl' ? 4 : 1);
+  };
+  const cd = +((document.getElementById('select-9sig-crashdrop') || {}).value);
+  const sp = +((document.getElementById('select-9sig-spike')     || {}).value);
+  return {
+    sigUlCol: ulSel('select-9sig-underlying'),
+    smaUlCol: ulSel('select-sma-underlying'),
+    qGrowth:  +((document.getElementById('select-9sig-growth') || {}).value) / 100 || 0.09,
+    crashDropPct:   Number.isFinite(cd) ? cd : 30,
+    spikeTriggerPct: Number.isFinite(sp) ? sp : 100,
+  };
+}
+
+// Helper for analytics sim sites: run simulate() and (only when the SMA
+// strategy is in play either as the heatmap strategy or as its baseline)
+// also run simulateSMA() and attach its result. Avoids paying for the SMA
+// loop in the common case where it isn't displayed.
+function _smaParamsForAnalytics() {
+  const usesSMA = (analyticsStrategy === 'sma' || analyticsBaseline === 'sma');
+  if (!usesSMA) return null;
+  const { smaUlCol } = _underlyingAndGrowth();
+  return {
+    smaAsset:      (document.getElementById('select-sma-asset')  || {}).value || 'qqq',
+    smaWindow:     +((document.getElementById('select-sma-window') || {}).value) || 200,
+    underlyingCol: smaUlCol,
+  };
+}
+
+function _runAnalyticsSim(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts) {
+  // Inject the page-level underlying + qGrowth + rule choices into opts so
+  // the main sim runs on whatever the user picked. Caller-provided opts win
+  // — e.g. the adaptive cache passes pre-computed adaptiveStates.
+  const { sigUlCol, qGrowth, crashDropPct, spikeTriggerPct } = _underlyingAndGrowth();
+  opts = Object.assign({ underlyingCol: sigUlCol, qGrowth, crashDropPct, spikeTriggerPct }, opts);
+  const sim = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
+  const smaP = _smaParamsForAnalytics();
+  if (smaP) {
+    const r = simulateSMA(initial, monthly, rate, entryIdx, exitIdx, annualRaise, smaP);
+    sim.smaPoints = r.smaPoints;
+  }
+  return sim;
+}
+
 // Per-(startYear, period) simulate() cache for the heatmap-cell tooltip.
 // Populated lazily on first hover of each cell, reused after that.
 let _cellSims    = new Map();
@@ -816,7 +1044,9 @@ function getCellSim(startYear, period) {
   const switchTo9sig = tqqqAbove * 100;
   const switchToAll  = tqqqBelow > 0 ? 100 / tqqqBelow : 100;
 
-  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow });
+  const smaP = _smaParamsForAnalytics();
+  const _ug = _underlyingAndGrowth();
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, sp: _ug.spikeTriggerPct });
   if (_cellSimsKey !== key) {
     _cellSims    = new Map();
     _cellSimsKey = key;
@@ -837,9 +1067,10 @@ function getCellSim(startYear, period) {
   const exitIdx  = lastOfEnd;
   if (entryIdx < 0 || exitIdx < 0 || exitIdx <= entryIdx) return null;
 
-  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow);
+  const { sigUlCol: _ulC, qGrowth: _qG } = _underlyingAndGrowth();
+  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow, _ulC, _qG);
   const opts = { switchTo9sig, switchToAllIn: switchToAll, yearsBack: tqqqWindow, adaptiveStates };
-  const sim = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
+  const sim = _runAnalyticsSim(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
   _cellSims.set(cellKey, sim);
   return sim;
 }
@@ -857,7 +1088,9 @@ function getYearStartSim(startYear) {
   const switchTo9sig = tqqqAbove * 100;
   const switchToAll  = tqqqBelow > 0 ? 100 / tqqqBelow : 100;
 
-  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow });
+  const smaP = _smaParamsForAnalytics();
+  const _ug = _underlyingAndGrowth();
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, s: switchTo9sig, a: switchToAll, w: tqqqWindow, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, sp: _ug.spikeTriggerPct });
   if (_perYearSimsKey !== key) {
     _perYearSims    = new Map();
     _perYearSimsKey = key;
@@ -879,9 +1112,10 @@ function getYearStartSim(startYear) {
   const exitIdx = quarterlyData.length - 1;
   if (exitIdx <= entryIdx) return null;
 
-  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow);
+  const { sigUlCol: _ulC, qGrowth: _qG } = _underlyingAndGrowth();
+  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAll, tqqqWindow, _ulC, _qG);
   const opts = { switchTo9sig, switchToAllIn: switchToAll, yearsBack: tqqqWindow, adaptiveStates };
-  const sim = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
+  const sim = _runAnalyticsSim(initial, monthly, rate, entryIdx, exitIdx, annualRaise, opts);
   _perYearSims.set(startYear, sim);
   return sim;
 }
@@ -1098,14 +1332,21 @@ function buildTooltipLineChart(series, opts) {
 }
 
 function getSpiralSim(initial, monthly, rate, annualRaise, opts) {
+  const smaP = _smaParamsForAnalytics();
+  const _ug  = _underlyingAndGrowth();
   const key = JSON.stringify({
     initial, monthly, rate, annualRaise,
     s: opts && opts.switchTo9sig,
     a: opts && opts.switchToAllIn,
     w: opts && opts.yearsBack,
+    sma: smaP,
+    ul: _ug.sigUlCol,
+    qg: _ug.qGrowth,
+    cd: _ug.crashDropPct,
+    sp: _ug.spikeTriggerPct,
   });
   if (_spiralSimKey === key && _spiralSim) return _spiralSim;
-  _spiralSim    = simulate(initial, monthly, rate, 0, quarterlyData.length - 1, annualRaise, opts);
+  _spiralSim    = _runAnalyticsSim(initial, monthly, rate, 0, quarterlyData.length - 1, annualRaise, opts);
   _spiralSimKey = key;
   return _spiralSim;
 }
@@ -1406,12 +1647,11 @@ async function buildHeatmap() {
   const switchTo9sig  = tqqqAboveMult * 100;
   const switchToAllIn = tqqqBelowMult > 0 ? 100 / tqqqBelowMult : 100;
   // Cache the adaptive states once — they're identical for every cell.
-  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAllIn, tqqqWindow);
+  const { sigUlCol: _ulC, qGrowth: _qG } = _underlyingAndGrowth();
+  const adaptiveStates = computeAdaptiveStates(switchTo9sig, switchToAllIn, tqqqWindow, _ulC, _qG);
   const opts = { switchTo9sig, switchToAllIn, yearsBack: tqqqWindow, adaptiveStates };
 
   renderAnalyticsMetrics(initial, monthly, annualRaise, rate, tqqqAboveMult, tqqqBelowMult, tqqqWindow, analyticsStrategy);
-  const titleEl = document.getElementById('analytics-chart-title');
-  if (titleEl) titleEl.textContent = (STRATEGY_LABELS[analyticsStrategy] || 'Adaptive') + ' — Final Value';
   const subEl = document.querySelector('.analytics-chart-sub');
   if (subEl) {
     if (analyticsBaseline === 'custom-pct') {
@@ -1468,6 +1708,11 @@ async function buildHeatmap() {
   // (no prior year exists), we fall back to the first quarter of the starting
   // year. We include the latest year (maxYear) even when only partial data
   // exists for it — its row will just show fewer columns / partial-year values.
+  // Floor entry by the most-restrictive of (selected strategy, selected
+  // baseline). E.g. picking B&H SOXL as the strategy skips rows before 1994
+  // since SOXL has no pre-1994 history.
+  const floorEntryIdx = effectiveEntryMinQIdx([analyticsStrategy, analyticsBaseline].filter(Boolean));
+
   const cells = [];
   for (let sy = maxYear; sy >= minYear; sy--) {
     for (const p of periods) {
@@ -1478,6 +1723,7 @@ async function buildHeatmap() {
         ? yearLast.get(sy - 1)
         : yearFirst.get(sy);
       if (entryIdx == null) continue;
+      if (entryIdx < floorEntryIdx) continue;
       const exitIdx  = yearLast.get(endYear);
       if (exitIdx - entryIdx < 1) continue; // need at least one quarter of span
       cells.push({ year: sy, period: p, entryIdx, exitIdx, value: 0 });
@@ -1555,7 +1801,7 @@ async function buildHeatmap() {
     let maxExitIdx = entryIdx;
     for (const c of rowCells) if (c.exitIdx > maxExitIdx) maxExitIdx = c.exitIdx;
 
-    const sim = simulate(initial, monthly, rate, entryIdx, maxExitIdx, annualRaise, opts);
+    const sim = _runAnalyticsSim(initial, monthly, rate, entryIdx, maxExitIdx, annualRaise, opts);
     const stratSeries = strategyValueArray(sim, strat);
     const ddPrefix    = computeMaxDDPrefix(stratSeries);
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Fetches daily closing prices for QQQ, TQQQ, and SPY from Yahoo Finance and
-short-term interest rates from FRED, then writes them as TSV files consumed
-by index.html.
+Fetches daily closing prices for QQQ, TQQQ, SPY, SOXX, SOXL, and QQQ5 (the
+Leverage Shares 5× Long Nasdaq 100 ETP on LSE, yfinance ticker `QQQ5.L`)
+from Yahoo Finance and short-term interest rates from FRED, then writes
+them as TSV files consumed by index.html.
 
 Pre-IPO history is fabricated by walking actual daily index values backward
 from each ETF's first real trading day, applying the leveraged-return-minus-
@@ -21,7 +22,10 @@ Sources used:
   ^NDX  base series   ← local ^ndx_d.csv (Stooq, back to 1938-01-03)
                           merged with yfinance ^NDX from 1985-10-01 (overrides
                           the CSV on overlapping dates)
-  ^GSPC, ^SP500TR, QQQ, TQQQ, SPY, QQQ-raw  ← yfinance
+  ^SOX  base series   ← yfinance (PHLX Semiconductor Sector, from 1993-12-01;
+                          index didn't exist before then, so no deeper history
+                          is available without constituent-level reconstruction)
+  ^GSPC, ^SP500TR, QQQ, TQQQ, SPY, SOXX, SOXL, QQQ5.L, QQQ-raw, SOXX-raw  ← yfinance
   DFF  (daily 1954+)  ← FRED  — Fed Funds Effective Rate, the swap-counterparty
                                 financing reference for leveraged ETFs
   TB3MS (monthly 1934+) ← FRED — 3-month T-bill, used as the pre-1954 proxy
@@ -34,9 +38,15 @@ Synthesis formulas:
                         = ^NDX × QQQ_adj / QQQ_raw
   SPY  pre-1988       ← ^GSPC, clipped to NDX start  (1× − SPY expense)
   SPY  1988 → 1993    ← ^SP500TR                     (1× − SPY expense)
+  SOXX pre-2001       ← ^SOX                         (1× − SOXX expense)
+  SOXL pre-2001       ← ^SOX                         (3× − 2×rate − SOXL exp)
+  SOXL 2001 → 2010    ← derived SOX-TR               (3× − 2×rate − SOXL exp)
+                        = ^SOX × SOXX_adj / SOXX_raw
+  QQQ5 pre-1999       ← extended ^NDX                (5× − 4×rate − QQQ5 exp)
+  QQQ5 1999 → 2021    ← derived NDX-TR               (5× − 4×rate − QQQ5 exp)
 
-QQQ and SPY have leverage 1, so (L-1) × rate = 0 — no financing-cost term.
-Only TQQQ gets the rate correction.
+QQQ, SPY, and SOXX have leverage 1, so (L-1) × rate = 0 — no financing-cost
+term. TQQQ, SOXL, and QQQ5 get the rate correction.
 
 The local ^ndx_d.csv extends pre-1985 history. The actual NASDAQ-100 index
 didn't exist before 1985-01-31, so values before that are a back-reconstruction
@@ -73,6 +83,7 @@ import csv
 import io
 import os
 import sys
+import time
 import urllib.request
 from datetime import timedelta
 
@@ -87,6 +98,31 @@ basedir = os.path.dirname(os.path.abspath(__file__))
 QQQ_EXPENSE_DAILY  = 0.0020   / 252  # 0.20%   annual
 TQQQ_EXPENSE_DAILY = 0.0088   / 252  # 0.88%   annual
 SPY_EXPENSE_DAILY  = 0.000945 / 252  # 0.0945% annual
+SOXX_EXPENSE_DAILY = 0.0035   / 252  # 0.35%   annual (iShares Semiconductor)
+SOXL_EXPENSE_DAILY = 0.0075   / 252  # 0.75%   annual (Direxion 3× Semi Bull, gross TER)
+# === Swap-spread calibration ==============================================
+# Real leveraged ETFs pay their swap counterparty something HIGHER than the
+# bare Fed Funds rate. The spread reflects counterparty risk premium, swap
+# desk margin, and product-specific friction. Empirically calibrated by
+# regressing real (yfinance) returns against the naive (L × index − (L-1)×DFF
+# − TER) prediction:
+#   TQQQ (3×): 0.65%/yr   — original code's residual 1.3 pp/yr ÷ 2
+#   SOXL (3×): 0.50%/yr   — 16-year fit; residual ≈ 0
+#   QQQ5 (5×): 2.50%/yr   — 4.4-year fit; matches Leverage Shares' PRIIPs KID
+#                            disclosure of 0.0267%/day mgmt+admin (~9.75%/yr)
+TQQQ_SWAP_SPREAD = 0.0065
+SOXL_SWAP_SPREAD = 0.005
+QQQ5_EXPENSE_DAILY = 0.0075   / 252  # 0.75%   annual — Leverage Shares' published TER
+                                     # for the 5× Long Nasdaq 100 ETP (QQQ5.L).
+QQQ5_SWAP_SPREAD   = 0.025           # 2.5%/yr swap-counterparty spread over the
+                                     # financing benchmark (FRED DFF). Calibrated
+                                     # from 1,111 days of real QQQ5.L data
+                                     # (2021-12-10 → present): the all-in residual
+                                     # drag of ~10 pp/yr divided by (L-1)=4 gives
+                                     # ~2.5%/yr above DFF. Bigger than TQQQ's
+                                     # implied 0.65%/yr because 5× single-index
+                                     # swaps are exotic — smaller liquidity pool,
+                                     # higher counterparty risk premium.
 
 # === Financing-cost model =================================================
 # A leveraged ETF holding $1 of investor NAV achieves $L of index exposure by
@@ -104,9 +140,12 @@ TBMS_START  = '1934-01-01'
 DATA_DIR = 'data'
 
 tickers = [
-    ('QQQ',  'synthetic-qqq.tsv'),
-    ('TQQQ', 'synthetic-tqqq.tsv'),
-    ('SPY',  'spy.tsv'),
+    ('QQQ',    'synthetic-qqq.tsv'),
+    ('TQQQ',   'synthetic-tqqq.tsv'),
+    ('SPY',    'spy.tsv'),
+    ('SOXX',   'synthetic-soxx.tsv'),
+    ('SOXL',   'synthetic-soxl.tsv'),
+    ('QQQ5.L', 'synthetic-qqq5.tsv'),
 ]
 
 
@@ -169,26 +208,78 @@ def fmt_close(value):
     return f'{value:.12g}'
 
 
-def fetch_fred(series_id, start_date):
-    """Fetch a FRED daily/monthly series. Returns [(Timestamp, value_percent)]."""
+def read_rate_tsv(path):
+    """Inverse of write_rate_tsv: parse a cached rate TSV back into
+    [(Timestamp, value_percent)]. Used as a fallback when FRED is
+    unreachable so the daily refresh doesn't crash."""
     import pandas as pd
-    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd={start_date}"
-    print(f"Fetching FRED {series_id}...")
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    raw = urllib.request.urlopen(req, timeout=60).read().decode('utf-8')
     out = []
-    reader = csv.reader(io.StringIO(raw))
-    next(reader)  # header row: observation_date,SERIES
-    for row in reader:
-        if len(row) < 2 or row[1].strip() in ('', '.'):
-            continue
-        try:
-            d = pd.Timestamp(row[0])
-            v = float(row[1])
-            out.append((d, v))
-        except (ValueError, TypeError):
-            continue
+    if not os.path.exists(path):
+        return out
+    with open(path) as f:
+        next(f, None)  # skip header
+        for line in f:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) < 2:
+                continue
+            try:
+                date_str = parts[0].split(' ')[0]
+                m, d, y = date_str.split('/')
+                out.append((pd.Timestamp(int(y), int(m), int(d)), float(parts[1])))
+            except (ValueError, TypeError):
+                continue
     return out
+
+
+def fetch_fred(series_id, start_date, fallback_path=None, attempts=3, force_remote=False):
+    """Return a FRED daily/monthly rate series as [(Timestamp, value_percent)].
+
+    Cache-first: if `fallback_path` exists and has rows, return it without
+    touching the network. The series we use (DFF, TB3MS) are historical
+    rates — their pre-today values never change, and today's value barely
+    matters for the synthesis. The cron should not depend on FRED's uptime.
+
+    `force_remote=True` (set via the --refresh-rates CLI flag) bypasses the
+    cache and pulls from FRED with retry + final cache fallback on failure.
+    Use this when you genuinely need fresh rates (e.g. updating the rate
+    TSVs committed alongside the price data)."""
+    import pandas as pd
+    if not force_remote and fallback_path and os.path.exists(fallback_path):
+        cached = read_rate_tsv(fallback_path)
+        if cached:
+            print(f"  FRED {series_id}: using cached {os.path.basename(fallback_path)} ({len(cached)} rows; pass --refresh-rates to re-fetch)")
+            return cached
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd={start_date}"
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            print(f"Fetching FRED {series_id} (attempt {attempt}/{attempts})...")
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            raw = urllib.request.urlopen(req, timeout=60).read().decode('utf-8')
+            out = []
+            reader = csv.reader(io.StringIO(raw))
+            next(reader)  # header row: observation_date,SERIES
+            for row in reader:
+                if len(row) < 2 or row[1].strip() in ('', '.'):
+                    continue
+                try:
+                    out.append((pd.Timestamp(row[0]), float(row[1])))
+                except (ValueError, TypeError):
+                    continue
+            if out:
+                return out
+            last_err = "empty response"
+        except Exception as e:
+            last_err = e
+            print(f"  FRED {series_id} attempt {attempt} failed: {e}")
+        if attempt < attempts:
+            time.sleep(2 ** attempt)  # 2s, 4s backoff
+    if fallback_path and os.path.exists(fallback_path):
+        cached = read_rate_tsv(fallback_path)
+        if cached:
+            print(f"  FRED {series_id} unreachable ({last_err}); using cached {os.path.basename(fallback_path)} ({len(cached)} rows)")
+            return cached
+    raise RuntimeError(f"FRED {series_id} fetch failed after {attempts} attempts and no usable fallback: {last_err}")
 
 
 def build_combined_rates(dff_pairs, tbms_pairs):
@@ -232,7 +323,7 @@ def write_rate_tsv(path, rows):
             f.write(f"{d.month}/{d.day}/{d.year} 16:00:00\t{v:.4f}\n")
 
 
-def walk_backward(source_pairs, anchor_date, anchor_price, leverage, expense_daily, rate_map=None):
+def walk_backward(source_pairs, anchor_date, anchor_price, leverage, expense_daily, rate_map=None, rate_spread=0.0):
     """Anchor at (anchor_date, anchor_price) and walk source returns backward
     to fabricate target closes for every source date < anchor_date.
 
@@ -266,11 +357,41 @@ def walk_backward(source_pairs, anchor_date, anchor_price, leverage, expense_dai
         financing_daily = 0.0
         if rate_map is not None and financing_mult > 0:
             rate_pct = rate_lookup(rate_map, pre[i - 1][0])
-            financing_daily = financing_mult * (rate_pct / 100.0) / 252.0
+            # Effective swap rate = benchmark rate + per-product spread.
+            # Most products use the bare benchmark (spread=0); QQQ5 needs
+            # ~0.025 (2.5%/yr) added because its 5× swap is exotic.
+            financing_daily = financing_mult * ((rate_pct / 100.0) + rate_spread) / 252.0
         synth[i - 1] = max(synth[i] / (1 + leverage * ret - financing_daily - expense_daily), 0)
     exact = pre[-1][0] == anchor_date
     output_n = n - 1 if exact else n
     pairs = [(pre[i][0], synth[i]) for i in range(output_n)]
+    rows = [(d.strftime('%-m/%-d/%Y 16:00:00'), c) for d, c in pairs]
+    return rows, pairs
+
+
+def walk_forward(source_pairs, anchor_date, anchor_price, leverage, expense_daily, rate_map=None):
+    """Mirror of walk_backward. Used for fully-synthetic series like QQQ5
+    where there's no real ETF anchor for the forward window — we run the
+    same leverage formula past the anchor instead of stopping at a real
+    first-trading-day price.
+
+    Returns (rows, pairs) including the anchor row (unlike walk_backward,
+    which excludes the anchor when it falls exactly on the source date)."""
+    post = [(d, c) for d, c in source_pairs if d >= anchor_date]
+    n = len(post)
+    if n < 2:
+        return [], []
+    synth = [0.0] * n
+    synth[0] = anchor_price
+    financing_mult = leverage - 1
+    for i in range(1, n):
+        ret = (post[i][1] - post[i - 1][1]) / post[i - 1][1]
+        financing_daily = 0.0
+        if rate_map is not None and financing_mult > 0:
+            rate_pct = rate_lookup(rate_map, post[i - 1][0])
+            financing_daily = financing_mult * (rate_pct / 100.0) / 252.0
+        synth[i] = max(synth[i - 1] * (1 + leverage * ret - financing_daily - expense_daily), 0)
+    pairs = [(post[i][0], synth[i]) for i in range(n)]
     rows = [(d.strftime('%-m/%-d/%Y 16:00:00'), c) for d, c in pairs]
     return rows, pairs
 
@@ -294,16 +415,114 @@ def fetch(ticker, auto_adjust=True):
     return yf.download(ticker, period="max", auto_adjust=auto_adjust, progress=False)
 
 
+def read_price_tsv(path):
+    """Inverse of the price TSV writer: parse a synthetic-*.tsv back into
+    [(Timestamp, close)]. Used by the incremental refresh path to preserve
+    the (already permanently synthesized) pre-IPO prefix while replacing
+    the post-IPO real-data tail with fresh yfinance values."""
+    import pandas as pd
+    out = []
+    if not os.path.exists(path):
+        return out
+    with open(path) as f:
+        next(f, None)  # header
+        for line in f:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) < 2:
+                continue
+            try:
+                date_str = parts[0].split(' ')[0]
+                m, d, y = date_str.split('/')
+                out.append((pd.Timestamp(int(y), int(m), int(d)), float(parts[1])))
+            except (ValueError, TypeError):
+                continue
+    return out
+
+
+def write_price_tsv(path, prefix_pairs, real_df):
+    """Write Date\\tClose with synthesized prefix rows first, then real
+    yfinance bars. Shared by both rebuild and incremental modes."""
+    with open(path, 'w') as f:
+        f.write('Date\tClose\n')
+        for d, c in prefix_pairs:
+            f.write(f'{d.month}/{d.day}/{d.year} 16:00:00\t{fmt_close(c)}\n')
+        for date, row in real_df.iterrows():
+            date_str = date.strftime('%-m/%-d/%Y 16:00:00')
+            f.write(f'{date_str}\t{fmt_close(cell(row["Close"]))}\n')
+
+
+def incremental_refresh():
+    """Default daily-cron path. The synthesized pre-IPO prefix of each TSV
+    is permanent and lives in the committed file; we only need to refresh
+    the post-IPO real-data tail with fresh yfinance bars (and pick up any
+    Yahoo backfill corrections to existing real rows).
+
+    No FRED, no ^NDX, no ^SOX, no synthesis logic — those are bootstrap-only
+    concerns (use --rebuild). Daily runs touch only the 5 ETFs."""
+    data_dir = os.path.join(basedir, DATA_DIR)
+    for ticker, filename in tickers:
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            print(f"  {filename}: missing — run with --rebuild to bootstrap")
+            continue
+        real_df = fetch(ticker)
+        if real_df.empty:
+            print(f"  {filename}: yfinance returned no rows; leaving TSV untouched")
+            continue
+        first_real = normalize_ts(real_df.index[0])
+        existing = read_price_tsv(path)
+        prefix_pairs = [(d, c) for d, c in existing if d < first_real]
+        write_price_tsv(path, prefix_pairs, real_df)
+        last = real_df.index[-1].strftime('%Y-%m-%d')
+        print(f"  {filename}: {len(prefix_pairs)} preserved + {len(real_df)} real, through {last}")
+
+
+# === CLI =================================================================
+# Default mode: incremental refresh (fast, yfinance-only, no FRED). Used by
+# the daily GitHub Actions cron. Pre-IPO synthesized history stays as-is.
+# --rebuild: regenerate every TSV from scratch via the backward-synthesis
+# pipeline. Needs FRED + index data. Only run when adding a new ticker or
+# fixing the synthesis itself.
+import argparse
+_argp = argparse.ArgumentParser(description='Refresh ETF price TSVs.')
+_argp.add_argument('--rebuild', action='store_true',
+                   help='Full synthesis from scratch (uses cached FRED rates by '
+                        'default — historical rates do not change). Default is '
+                        'incremental yfinance refresh.')
+_argp.add_argument('--refresh-rates', action='store_true',
+                   help='Re-fetch FRED DFF + TB3MS from the network and overwrite '
+                        'data/fed-funds-effective.tsv + data/t-bill-3mo.tsv + '
+                        'data/short-rates.tsv. Use to refresh the committed rate '
+                        'data; not needed for synthesis (historical rates do not '
+                        'change).')
+_args = _argp.parse_args()
+
+if not _args.rebuild:
+    incremental_refresh()
+    print("Done.")
+    sys.exit(0)
+
+
+# === REBUILD MODE: full synthesis from scratch ===========================
+# Everything below this line is the original bootstrap pipeline that builds
+# pre-IPO synthesized history by walking index returns backward from each
+# ETF's first real trading day.
 qqq_df          = fetch('QQQ')                              # auto-adjusted (TR)
 qqq_raw_df      = fetch('QQQ', auto_adjust=False)           # split-adjusted only
 tqqq_df         = fetch('TQQQ')
 spy_df          = fetch('SPY')
+soxx_df         = fetch('SOXX')                             # auto-adjusted (TR)
+soxx_raw_df     = fetch('SOXX', auto_adjust=False)          # split-adjusted only
+soxl_df         = fetch('SOXL')
+qqq5_df         = fetch('QQQ5.L')                           # Leverage Shares 5× QQQ ETP (LSE), 2021-12-10+
 ndx_df          = fetch('^NDX')
+sox_df          = fetch('^SOX')                             # PHLX Semiconductor, from 1993-12-01
 gspc_df         = fetch('^GSPC')
 sp500tr_df      = fetch('^SP500TR')
 
 ndx_pairs       = extend_with_csv(df_to_pairs(ndx_df), read_ndx_csv())
 qqq_pairs       = df_to_pairs(qqq_df)                       # = QQQ_adj
+sox_pairs       = df_to_pairs(sox_df)
 sp500tr_pairs   = df_to_pairs(sp500tr_df)
 ndx_start       = ndx_pairs[0][0] if ndx_pairs else df_to_pairs(ndx_df)[0][0]
 gspc_clipped    = [(d, c) for d, c in df_to_pairs(gspc_df) if d >= ndx_start]
@@ -311,8 +530,8 @@ gspc_clipped    = [(d, c) for d, c in df_to_pairs(gspc_df) if d >= ndx_start]
 # Fetch FRED short-rate series for financing-cost correction. Done after the
 # yfinance pulls so that if FRED rate-limits us, we still have fresh price
 # data; the synthesis just falls back to the naive formula until next run.
-dff_pairs       = fetch_fred('DFF',   DFF_START)            # daily 1954+
-tbms_pairs      = fetch_fred('TB3MS', TBMS_START)           # monthly 1934+
+dff_pairs       = fetch_fred('DFF',   DFF_START,  fallback_path=os.path.join(basedir, DATA_DIR, 'fed-funds-effective.tsv'), force_remote=_args.refresh_rates)  # daily 1954+
+tbms_pairs      = fetch_fred('TB3MS', TBMS_START, fallback_path=os.path.join(basedir, DATA_DIR, 't-bill-3mo.tsv'),           force_remote=_args.refresh_rates)  # monthly 1934+
 combined_rates  = build_combined_rates(dff_pairs, tbms_pairs)
 rate_map        = dict(combined_rates)                      # Timestamp → percent
 
@@ -325,6 +544,17 @@ ndx_tr_pairs = []
 for d in sorted(qqq_adj_map):
     if d in ndx_map and d in qqq_raw_map and qqq_raw_map[d] > 0:
         ndx_tr_pairs.append((d, ndx_map[d] * qqq_adj_map[d] / qqq_raw_map[d]))
+
+# Same trick for SOX-TR: ^SOX × SOXX_adj / SOXX_raw, from SOXX's 2001 inception.
+# Valid only while SOXX tracked ^SOX (pre-2021 reindex); we only consume it for
+# the 2001 → 2010 phase of the SOXL synthesis, so post-2021 mismatch is moot.
+sox_map      = dict(sox_pairs)
+soxx_adj_map = {d: cell(row['Adj Close']) for d, row in soxx_raw_df.iterrows()}
+soxx_raw_map = {d: cell(row['Close'])     for d, row in soxx_raw_df.iterrows()}
+sox_tr_pairs = []
+for d in sorted(soxx_adj_map):
+    if d in sox_map and d in soxx_raw_map and soxx_raw_map[d] > 0:
+        sox_tr_pairs.append((d, sox_map[d] * soxx_adj_map[d] / soxx_raw_map[d]))
 
 
 # ---- QQQ pre-1999 (single phase, ^NDX) ----
@@ -353,6 +583,7 @@ phase1_rows, phase1_pairs = walk_backward(
     leverage=3,
     expense_daily=TQQQ_EXPENSE_DAILY,
     rate_map=rate_map,
+    rate_spread=TQQQ_SWAP_SPREAD,
 )
 # Phase 2: pre-1999, walk through ^NDX directly anchored on phase 1's earliest
 # synth value. Net daily error ~ -3*dividend_yield = ~-1.5-2%/yr (price-only).
@@ -362,10 +593,43 @@ if phase1_pairs:
         ndx_pairs, p2_anchor_date, p2_anchor_price,
         leverage=3, expense_daily=TQQQ_EXPENSE_DAILY,
         rate_map=rate_map,
+        rate_spread=TQQQ_SWAP_SPREAD,
     )
     tqqq_prefix_rows = phase2_rows + phase1_rows
 else:
     tqqq_prefix_rows = phase1_rows
+
+
+# ---- QQQ5: real Leverage Shares 5× QQQ from 2021-12-10, synthesized prefix ----
+# Mirrors the TQQQ two-phase backward chain — but with leverage=5 and anchored
+# on QQQ5.L's first real close instead of TQQQ's. The Leverage Shares ETP only
+# launched in 2021, so the pre-2021 portion is synthesized:
+#
+#   pre-1999    walk_backward through ^NDX directly      (price-only — -5×div_yield/yr bias)
+#   1999 → 2021 walk_backward through derived NDX-TR      (^NDX × QQQ_adj/QQQ_raw)
+#   2021+       real QQQ5.L from yfinance
+#
+# leverage=5, expense=0.75%/yr, financing cost = 4×short_rate/yr.
+qqq5_phase1_rows, qqq5_phase1_pairs = walk_backward(
+    ndx_tr_pairs,
+    anchor_date=qqq5_df.index[0],
+    anchor_price=cell(qqq5_df['Close'].iloc[0]),
+    leverage=5,
+    expense_daily=QQQ5_EXPENSE_DAILY,
+    rate_map=rate_map,
+    rate_spread=QQQ5_SWAP_SPREAD,
+)
+if qqq5_phase1_pairs:
+    q5p2_d, q5p2_p = qqq5_phase1_pairs[0]
+    qqq5_phase2_rows, _ = walk_backward(
+        ndx_pairs, q5p2_d, q5p2_p,
+        leverage=5, expense_daily=QQQ5_EXPENSE_DAILY,
+        rate_map=rate_map,
+        rate_spread=QQQ5_SWAP_SPREAD,
+    )
+    qqq5_prefix_rows = qqq5_phase2_rows + qqq5_phase1_rows
+else:
+    qqq5_prefix_rows = qqq5_phase1_rows
 
 
 # ---- SPY: two-phase to use real S&P TR data where available ----
@@ -389,8 +653,52 @@ else:
     spy_prefix_rows = spy_phase1_rows
 
 
-prefix_by_ticker = {'QQQ': qqq_prefix_rows, 'TQQQ': tqqq_prefix_rows, 'SPY': spy_prefix_rows}
-real_by_ticker   = {'QQQ': qqq_df, 'TQQQ': tqqq_df, 'SPY': spy_df}
+# ---- SOXX pre-2001 (single phase, ^SOX) ----
+# ^SOX is price-only (PHLX Semiconductor is not a TR index), so pre-2001 SOXX
+# understates by ~SOXX dividend yield. Semi sector yields are low (~1%/yr).
+soxx_prefix_rows, _ = walk_backward(
+    sox_pairs,
+    anchor_date=soxx_df.index[0],
+    anchor_price=cell(soxx_df['Close'].iloc[0]),
+    leverage=1,
+    expense_daily=SOXX_EXPENSE_DAILY,
+)
+
+
+# ---- SOXL: two-phase, mirrors TQQQ ----
+# Phase 1: 2001 → 2010, walk through derived SOX-TR (^SOX × SOXX_adj/SOXX_raw)
+# so the SOXX expense cancels, leaving a clean total-return daily series.
+# rate_map gives the (L-1)×rate financing-cost correction for 3× leverage.
+soxl_phase1_rows, soxl_phase1_pairs = walk_backward(
+    sox_tr_pairs,
+    anchor_date=soxl_df.index[0],
+    anchor_price=cell(soxl_df['Close'].iloc[0]),
+    leverage=3,
+    expense_daily=SOXL_EXPENSE_DAILY,
+    rate_map=rate_map,
+    rate_spread=SOXL_SWAP_SPREAD,
+)
+# Phase 2: pre-2001, walk through ^SOX directly. Price-only bias is
+# ~3×semi_yield ≈ -3%/yr understated; ^SOX itself only starts 1993-12-01.
+if soxl_phase1_pairs:
+    sx2_anchor_date, sx2_anchor_price = soxl_phase1_pairs[0]
+    soxl_phase2_rows, _ = walk_backward(
+        sox_pairs, sx2_anchor_date, sx2_anchor_price,
+        leverage=3, expense_daily=SOXL_EXPENSE_DAILY,
+        rate_map=rate_map,
+        rate_spread=SOXL_SWAP_SPREAD,
+    )
+    soxl_prefix_rows = soxl_phase2_rows + soxl_phase1_rows
+else:
+    soxl_prefix_rows = soxl_phase1_rows
+
+
+prefix_by_ticker = {'QQQ': qqq_prefix_rows, 'TQQQ': tqqq_prefix_rows, 'SPY': spy_prefix_rows,
+                    'SOXX': soxx_prefix_rows, 'SOXL': soxl_prefix_rows,
+                    'QQQ5.L': qqq5_prefix_rows}
+real_by_ticker   = {'QQQ': qqq_df, 'TQQQ': tqqq_df, 'SPY': spy_df,
+                    'SOXX': soxx_df, 'SOXL': soxl_df,
+                    'QQQ5.L': qqq5_df}
 
 data_dir = os.path.join(basedir, DATA_DIR)
 os.makedirs(data_dir, exist_ok=True)

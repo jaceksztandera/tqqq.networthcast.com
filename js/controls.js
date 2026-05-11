@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','slider-envelope-opacity','select-tqqq-above','select-tqqq-below','select-tqqq-window'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','slider-envelope-opacity','select-tqqq-above','select-tqqq-below','select-tqqq-window','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-spike'];
 const LS_KEY = '9sig-sliders';
 
 function saveSliders() {
@@ -32,10 +32,34 @@ function saveSliders() {
 
 // Regular sliders (not entry/exit — those are handled by dual-range)
 ['slider-initial','slider-monthly','slider-raise','slider-rate'].forEach(id => {
-  document.getElementById(id).addEventListener('input', () => { saveSliders(); render(); });
+  document.getElementById(id).addEventListener('input', () => {
+    // Snap the cash-rate slider to 0.5% increments. The slider itself runs
+    // 0-1000 on a quadratic curve, so we round the *rate* (not the slider
+    // position) and write back the slider position that matches.
+    if (id === 'slider-rate') {
+      const el = document.getElementById('slider-rate');
+      const snappedRate = Math.round(sliderToRate(+el.value) * 2) / 2;
+      const snappedPos  = rateToSlider(snappedRate);
+      if (snappedPos !== +el.value) el.value = String(snappedPos);
+    }
+    saveSliders();
+    render();
+  });
 });
-['select-tqqq-above','select-tqqq-below','select-tqqq-window'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => { saveSliders(); render(); });
+['select-tqqq-above','select-tqqq-below','select-tqqq-window','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-spike'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => {
+    saveSliders();
+    // The signal-growth selector changes the strategy's display name
+    // ("9sig" → "15sig"). Refresh static labels in the analytics modal
+    // so the button + dropdown option pick up the new name. Other places
+    // (chart line label, legend chip, log table header) already re-read
+    // on render().
+    if (id === 'select-9sig-growth' && typeof refresh9sigDisplayLabels === 'function') {
+      refresh9sigDisplayLabels();
+    }
+    render();
+  });
 });
 
 // Envelope opacity: just retint existing shift datasets, no re-simulation
@@ -45,7 +69,7 @@ document.getElementById('slider-envelope-opacity').addEventListener('input', () 
   if (chart) {
     const c9 = `rgba(34,211,238,${v})`;
     for (let i = 0; i < envelopeShiftCount; i++) {
-      const ds9 = chart.data.datasets[9 + i];
+      const ds9 = chart.data.datasets[12 + i];
       if (ds9) ds9.borderColor = c9;
     }
     chart.update('none');
@@ -281,6 +305,17 @@ function shareConfig() {
   params.set('tu', get('select-tqqq-above').value);
   params.set('td', get('select-tqqq-below').value);
   params.set('tw', get('select-tqqq-window').value);
+
+  // SMA strategy params (signal asset + window + underlying)
+  if (get('select-sma-asset'))      params.set('sa', get('select-sma-asset').value);
+  if (get('select-sma-window'))     params.set('sw', get('select-sma-window').value);
+  if (get('select-sma-underlying')) params.set('su', get('select-sma-underlying').value);
+
+  // 9sig + Adaptive underlying & 9sig signal-line growth & rule customization
+  if (get('select-9sig-underlying')) params.set('nu', get('select-9sig-underlying').value);
+  if (get('select-9sig-growth'))     params.set('ng', get('select-9sig-growth').value);
+  if (get('select-9sig-crashdrop'))  params.set('nc', get('select-9sig-crashdrop').value);
+  if (get('select-9sig-spike'))      params.set('ns', get('select-9sig-spike').value);
 
   // Toggles
   params.set('l',

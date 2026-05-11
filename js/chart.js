@@ -11,12 +11,15 @@ let _logData = null;
 // supporting lines (TQQQ holding / target / cash) live inside the 9sig
 // side-panel instead — see SUB_LEGEND below.
 const LEGEND_ORDER = [
-  8, // Adaptive
-  0, // 9sig
-  2, // B&H TQQQ
-  3, // B&H QQQ
-  4, // B&H SPY
-  7, // Invested Compounded
+  8,  // Adaptive
+  0,  // 9sig
+  10, // SMA
+  2,  // B&H TQQQ
+  11, // B&H QQQ5
+  9,  // B&H SOXL
+  3,  // B&H QQQ
+  4,  // B&H SPY
+  7,  // Invested Compounded
 ];
 // When a strategy chip's "more" is clicked, its panel can show nested
 // chips for related sub-series. Currently only 9sig has any.
@@ -115,9 +118,11 @@ function buildLogTableHtml(d) {
   if (!d || !d.log || !d.log.length) return '';
   const rows = d.log.map((l, i) => {
     const ac = l.action.startsWith('SELL') ? 'action-sell' : l.action.startsWith('BUY') ? 'action-buy' : 'action-hold';
-    const bhVal  = d.bhPoints[i]  ? d.bhPoints[i].value  : 0;
-    const qqqVal = d.qqqPoints[i] ? d.qqqPoints[i].value : 0;
-    const spyVal = d.spyPoints[i] ? d.spyPoints[i].value : 0;
+    const bhVal   = d.bhPoints[i]   ? d.bhPoints[i].value   : 0;
+    const qqqVal  = d.qqqPoints[i]  ? d.qqqPoints[i].value  : 0;
+    const spyVal  = d.spyPoints[i]  ? d.spyPoints[i].value  : 0;
+    const soxlVal = d.soxlPoints && d.soxlPoints[i] ? d.soxlPoints[i].value : 0;
+    const qqq5Val = d.qqq5Points && d.qqq5Points[i] ? d.qqq5Points[i].value : 0;
     return `<tr>
       <td>${l.date.substring(0,7)}</td>
       <td>${fmtFull(l.invested)}</td>
@@ -126,6 +131,8 @@ function buildLogTableHtml(d) {
       <td>${fmtFull(Math.round(l.cash))}</td>
       <td>${fmtFull(Math.round(l.total))}</td>
       <td style="color:#f87171">${fmtFull(Math.round(bhVal))}</td>
+      <td style="color:#6366f1">${fmtFull(Math.round(qqq5Val))}</td>
+      <td style="color:#14b8a6">${fmtFull(Math.round(soxlVal))}</td>
       <td style="color:#4ade80">${fmtFull(Math.round(qqqVal))}</td>
       <td style="color:#f472b6">${fmtFull(Math.round(spyVal))}</td>
       <td class="${ac}">${l.action}</td>
@@ -142,8 +149,10 @@ function buildLogTableHtml(d) {
             <th>TQQQ Val</th>
             <th>Target</th>
             <th>Cash</th>
-            <th>9sig</th>
+            <th>${(typeof nineSigName === 'function') ? nineSigName() : '9sig'}</th>
             <th>B&H TQQQ</th>
+            <th>B&H QQQ5</th>
+            <th>B&H SOXL</th>
             <th>B&H QQQ</th>
             <th>B&H SPY</th>
             <th>Action</th>
@@ -192,8 +201,9 @@ function renderStatsGrid(idx) {
 // host outside the panel so they keep their state/listeners across the
 // frequent body re-renders fired by refreshAllLegends().
 const PANEL_LIVE_CONTROLS = {
-  0: ['envelope-controls'], // 9sig sidebar gets the rebalancing-offset controls
-  8: ['adaptive-controls'], // Adaptive sidebar gets the strategy-switch params
+  0:  ['9sig-controls', 'envelope-controls'], // 9sig sidebar: underlying + signal-growth + rebalancing-offset
+  8:  ['adaptive-controls'],                  // Adaptive sidebar: strategy-switch params (underlying inherits from 9sig)
+  10: ['sma-controls'],                       // SMA sidebar: asset + window + underlying selectors
 };
 const ALL_LIVE_CONTROL_IDS = Array.from(
   new Set(Object.values(PANEL_LIVE_CONTROLS).flat())
@@ -304,6 +314,14 @@ document.addEventListener('click', (e) => {
   refreshAllLegends();
   // Persist so a plain page refresh keeps the same legend visibility mix.
   if (typeof saveSliders === 'function') saveSliders();
+  // If the just-toggled dataset has a limited history (e.g. SOXL/SMA),
+  // re-render so the date-range floor recomputes and the slider snaps
+  // forward if it was sitting before the new floor.
+  if (typeof DATASET_IDX_TO_STRATEGY_KEY !== 'undefined') {
+    const stratKey = DATASET_IDX_TO_STRATEGY_KEY[idx];
+    const e = (stratKey != null && typeof earliestQIdxOf === 'function') ? earliestQIdxOf(stratKey) : 0;
+    if (e > 0) render();
+  }
 });
 
 // Esc closes the side panel too.
@@ -337,6 +355,13 @@ function render() {
   if (!Number.isFinite(exitIdx)  || exitIdx  < 0) exitIdx  = maxIdx;
   if (entryIdx > maxIdx) entryIdx = maxIdx;
   if (exitIdx  > maxIdx) exitIdx  = maxIdx;
+
+  // Strategy-aware floor: if a limited-history series is visible (e.g.
+  // SOXL only starts 1994), bump the entry forward so the chart doesn't
+  // show "$0 until first data point" for that line.
+  const floorIdx = (typeof effectiveEntryMinQIdx === 'function') ? effectiveEntryMinQIdx() : 0;
+  if (entryIdx < floorIdx) entryIdx = floorIdx;
+
   if (entryIdx >= exitIdx) {
     exitIdx  = Math.min(entryIdx + 1, maxIdx);
     entryIdx = Math.min(entryIdx, exitIdx - 1);
@@ -344,17 +369,50 @@ function render() {
   }
   document.getElementById('slider-entry').value = entryIdx;
   document.getElementById('slider-exit').value  = exitIdx;
+  // Update the dual-range UI in case clamping moved the entry handle.
+  if (window._dualRange && typeof window._dualRange.updateUI === 'function') {
+    window._dualRange.updateUI();
+  }
 
   document.getElementById('disp-initial').textContent = fmtFull(initial);
   document.getElementById('disp-monthly').textContent = fmtFull(monthly);
   const raiseVal = annualRaise * 100;
   document.getElementById('disp-raise').textContent = (raiseVal % 1 === 0 ? raiseVal.toFixed(0) : raiseVal.toFixed(1)) + '%';
   const rv = (rate * 100);
-  document.getElementById('disp-rate').textContent = (rv % 1 === 0 ? rv.toFixed(1) : rv.toFixed(2)) + '%';
+  // Rate is always 0.5%-snapped (see sliderToRate), so 1 decimal place is enough.
+  document.getElementById('disp-rate').textContent = rv.toFixed(1) + '%';
   document.getElementById('disp-entry').textContent = qLabel(quarterlyData[entryIdx][0]);
   document.getElementById('disp-exit').textContent = qLabel(quarterlyData[exitIdx][0]);
 
-  const { log, bhPoints, qqqPoints, spyPoints, adaptivePoints, totalContributed } = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, { switchTo9sig, switchToAllIn, yearsBack: tqqqWindow });
+  // Per-strategy underlying + 9sig signal-growth from their side-panel selects.
+  // 9sig and Adaptive share one selector (Adaptive is a 9sig vs. all-in mode
+  // switch — coupling them keeps the comparison meaningful). SMA has its own
+  // because its only relationship to the leveraged ETF is "hold it or not".
+  // Column index in quarterlyData: 1=TQQQ, 4=SOXL, 5=QQQ5.
+  const ulSel = (id) => {
+    const v = (document.getElementById(id) || {}).value;
+    return v === 'qqq5' ? 5 : (v === 'soxl' ? 4 : 1);
+  };
+  const sigUlCol = ulSel('select-9sig-underlying');
+  const smaUlCol = ulSel('select-sma-underlying');
+  const qGrowth  = +((document.getElementById('select-9sig-growth') || {}).value) / 100 || 0.09;
+  const crashDropPct  = +((document.getElementById('select-9sig-crashdrop') || {}).value);
+  const spikeTrigPct  = +((document.getElementById('select-9sig-spike')     || {}).value);
+
+  const { log, bhPoints, qqqPoints, spyPoints, soxlPoints, qqq5Points, adaptivePoints, totalContributed } = simulate(initial, monthly, rate, entryIdx, exitIdx, annualRaise, {
+    switchTo9sig, switchToAllIn, yearsBack: tqqqWindow,
+    qGrowth,
+    underlyingCol: sigUlCol,
+    crashDropPct:   Number.isFinite(crashDropPct) ? crashDropPct : 30,
+    spikeTriggerPct: Number.isFinite(spikeTrigPct) ? spikeTrigPct : 100,
+  });
+
+  // SMA timing strategy: same entry/exit window, same contributions, just
+  // a different in/out rule. Independent of 9sig's quarterly rebalance —
+  // it lives off the precomputed SMA-at-monthly map keyed by asset+window.
+  const smaAsset  = (document.getElementById('select-sma-asset')  || {}).value || 'qqq';
+  const smaWindow = +((document.getElementById('select-sma-window') || {}).value) || 200;
+  const { smaPoints } = simulateSMA(initial, monthly, rate, entryIdx, exitIdx, annualRaise, { smaAsset, smaWindow, underlyingCol: smaUlCol });
 
   const showEnvelope = document.getElementById('toggle-envelope').checked;
   const opacityVal = +document.getElementById('slider-envelope-opacity').value / 100;
@@ -375,6 +433,9 @@ function render() {
   const finalBH = bhPoints[bhPoints.length - 1].value;
   const finalQQQ = qqqPoints[qqqPoints.length - 1].value;
   const finalSPY = spyPoints[spyPoints.length - 1].value;
+  const finalSOXL = soxlPoints && soxlPoints.length ? soxlPoints[soxlPoints.length - 1].value : 0;
+  const finalQQQ5 = qqq5Points && qqq5Points.length ? qqq5Points[qqq5Points.length - 1].value : 0;
+  const finalSMA  = smaPoints  && smaPoints.length  ? smaPoints[smaPoints.length - 1].value   : 0;
   const years = log.length > 1 ? (new Date(log[log.length-1].date) - new Date(log[0].date)) / (365.25*86400000) : 1;
   const cagr = (end, start) => years > 0 && start > 0 ? (Math.pow(end / start, 1 / years) - 1) * 100 : 0;
   const finalAdaptive = adaptivePoints[adaptivePoints.length - 1].value;
@@ -382,6 +443,9 @@ function render() {
   const retBH = cagr(finalBH, totalContributed);
   const retQQQ = cagr(finalQQQ, totalContributed);
   const retSPY = cagr(finalSPY, totalContributed);
+  const retSOXL = cagr(finalSOXL, totalContributed);
+  const retQQQ5 = cagr(finalQQQ5, totalContributed);
+  const retSMA  = cagr(finalSMA,  totalContributed);
   const retInv = cagr(finalLog.investedCompounded, totalContributed);
   const retAdaptive = cagr(finalAdaptive, totalContributed);
 
@@ -395,7 +459,10 @@ function render() {
     3: retQQQ,
     4: retSPY,
     7: retInv,
-    8: retAdaptive,
+    8:  retAdaptive,
+    9:  retSOXL,
+    10: retSMA,
+    11: retQQQ5,
   };
 
   // Chart
@@ -406,6 +473,10 @@ function render() {
   const bhD = bhPoints.map(b => b.value);
   const qqqD = qqqPoints.map(q => q.value);
   const spyD = spyPoints.map(s => s.value);
+  const soxlD = soxlPoints ? soxlPoints.map(s => s.value) : [];
+  const qqq5D = qqq5Points ? qqq5Points.map(p => p.value) : [];
+  const smaD  = smaPoints  ? smaPoints.map(p => p.value)  : [];
+  const smaStates = smaPoints ? smaPoints.map(p => p.state) : [];
   const invD = log.map(l => l.investedCompounded);
   const targetD = log.map(l => l.target);
   const adaptiveD = adaptivePoints.map(a => a.value);
@@ -416,7 +487,7 @@ function render() {
   // annualized growth rate of their own balance.
   const seriesByIdx = {
     0: totalD, 1: tqqqValD, 2: bhD, 3: qqqD, 4: spyD,
-    5: targetD, 6: cashD, 7: invD, 8: adaptiveD,
+    5: targetD, 6: cashD, 7: invD, 8: adaptiveD, 9: soxlD, 10: smaD, 11: qqq5D,
   };
   const mainCagrIdx = window._cagrByDatasetIdx;
   window._strategyMetrics = {};
@@ -446,14 +517,27 @@ function render() {
   // stays 0 so transition markers drawn by the plugin don't get doubled.
   const adaptivePointHoverRadius = adaptivePoints.map(() => 4);
   const adaptivePointBg = adaptivePoints.map(a => a.state === '9sig' ? '#22d3ee' : '#f87171');
+  const _adaptToSigLabel = 'to ' + ((typeof nineSigName === 'function') ? nineSigName() : '9sig');
+  const _adaptToAllInLabel = 'to ' + (
+    ((document.getElementById('select-9sig-underlying') || {}).value || 'tqqq').toUpperCase()
+  );
   const adaptiveTransitions = adaptivePoints.map((a, i) => {
-    if (i === 0) return a.state === '9sig' ? 'to 9sig' : 'to TQQQ';
+    if (i === 0) return a.state === '9sig' ? _adaptToSigLabel : _adaptToAllInLabel;
     if (a.state === adaptivePoints[i-1].state) return null;
-    return a.state === '9sig' ? 'to 9sig' : 'to TQQQ';
+    return a.state === '9sig' ? _adaptToSigLabel : _adaptToAllInLabel;
   });
 
   if (chart) {
     chart.data.labels = labels;
+    // Dataset labels with "9sig" prefix are live — recompute from current
+    // signal-growth selector so the legend chip + tooltip auto-rename when
+    // the user picks a different growth %.
+    const _nsName = (typeof nineSigName === 'function') ? nineSigName() : '9sig';
+    chart.data.datasets[0].label = _nsName;
+    chart.data.datasets[1].label = _nsName + ' Holding';
+    chart.data.datasets[5].label = _nsName + ' Target';
+    chart.data.datasets[6].label = _nsName + ' Cash';
+    chart.data.datasets[10].label = `SMA ${(document.getElementById('select-sma-window') || {}).value || 200}`;
     chart.data.datasets[0].data = totalD;
     chart.data.datasets[1].data = tqqqValD;
     chart.data.datasets[2].data = bhD;
@@ -468,8 +552,12 @@ function render() {
     chart.data.datasets[8].pointBackgroundColor = adaptivePointBg;
     chart.data.datasets[8].pointBorderColor = adaptivePointBg;
     chart.data.datasets[8]._transitions = adaptiveTransitions;
-    while (chart.data.datasets.length < 9 + envelopeShiftCount) {
-      const offset = chart.data.datasets.length - 9;
+    chart.data.datasets[9].data = soxlD;
+    chart.data.datasets[10].data = smaD;
+    chart.data.datasets[10]._smaStates = smaStates;
+    chart.data.datasets[11].data = qqq5D;
+    while (chart.data.datasets.length < 12 + envelopeShiftCount) {
+      const offset = chart.data.datasets.length - 12;
       chart.data.datasets.push({
         label: '_shift_' + (offset + 1),
         data: [],
@@ -485,7 +573,7 @@ function render() {
       });
     }
     for (let i = 0; i < envelopeShiftCount; i++) {
-      const ds9 = chart.data.datasets[9 + i];
+      const ds9 = chart.data.datasets[12 + i];
       ds9.data = showEnvelope ? (shiftResults[i] || []) : [];
       ds9.borderColor = envColor;
       ds9.hidden = !showEnvelope;
@@ -496,10 +584,32 @@ function render() {
   } else {
   const ctx = document.getElementById('mainChart').getContext('2d');
 
-  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#c084fc'];
-  const lineNames  = ['9sig', '9sig TQQQ Holding', 'B&H TQQQ', 'B&H QQQ', 'B&H SPY', '9sig TQQQ Target', '9sig Cash', 'Invested Comp.', 'Adaptive'];
+  // Hue map (kept here so it's easy to retune later):
+  //   0  9sig          cyan       #22d3ee
+  //   1  9sig Holding  sky-blue   #38bdf8  (related to 9sig, lighter)
+  //   2  B&H TQQQ      red        #f87171
+  //   3  B&H QQQ       green      #4ade80
+  //   4  B&H SPY       pink       #f472b6
+  //   5  9sig Target   orange     #fb923c
+  //   6  9sig Cash     amber      #fbbf24
+  //   7  Invested Comp gray
+  //   8  Adaptive      purple     #c084fc
+  //   9  B&H SOXL      teal       #14b8a6  (was #a78bfa — clashed with Adaptive)
+  //  10  SMA           chartreuse #a3e635  (was #facc15 — clashed with Cash)
+  //  11  B&H QQQ5      indigo     #6366f1  (was #fb7185 — clashed with TQQQ red)
+  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#c084fc', '#14b8a6', '#a3e635', '#6366f1'];
+  const smaWinForLabel = +((document.getElementById('select-sma-window') || {}).value) || 200;
+  const _initNsName = (typeof nineSigName === 'function') ? nineSigName() : '9sig';
+  const lineNames  = [_initNsName, _initNsName + ' Holding', 'B&H TQQQ', 'B&H QQQ', 'B&H SPY', _initNsName + ' Target', _initNsName + ' Cash', 'Invested Comp.', 'Adaptive (WIP)', 'B&H SOXL', `SMA ${smaWinForLabel}`, 'B&H QQQ5'];
   // Match the borderDash on the corresponding chart dataset; null = solid.
-  const lineDashes = [null, [2,2], [6,3], [8,4], [6,3], [4,4], null, [3,3], null];
+  // Every B&H series gets a visually distinct dash pattern so you can tell
+  // them apart at a glance even when they overlap.
+  //   2 B&H TQQQ   [6,3]       medium dash
+  //   3 B&H QQQ    [8,4]       long dash
+  //   4 B&H SPY    [2,5]       sparse dots
+  //   9 B&H SOXL   [12,4]      extra-long dash
+  //  11 B&H QQQ5   [5,2,2,2]   dash-dot
+  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [12,4], null, [5,2,2,2]];
 
   // Touch / coarse-pointer detection — once at chart creation time. On those
   // devices Chart.js's tap-to-show tooltip is followed by an immediate
@@ -523,7 +633,7 @@ function render() {
 
     const ds = c.data.datasets;
     const date = c.data.labels[idx];
-    const vals = [ds[0].data[idx], ds[1].data[idx], ds[2].data[idx], ds[3].data[idx], ds[4].data[idx], ds[5].data[idx], ds[6].data[idx], ds[7].data[idx], ds[8].data[idx]];
+    const vals = [ds[0].data[idx], ds[1].data[idx], ds[2].data[idx], ds[3].data[idx], ds[4].data[idx], ds[5].data[idx], ds[6].data[idx], ds[7].data[idx], ds[8].data[idx], ds[9] ? ds[9].data[idx] : null, ds[10] ? ds[10].data[idx] : null, ds[11] ? ds[11].data[idx] : null];
 
     const rgba = (col, a) => {
       if (col.startsWith('rgba')) return col.replace(/,\s*[\d.]+\s*\)$/, `,${a})`);
@@ -533,8 +643,12 @@ function render() {
       return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
     };
 
+    // Read names from the live datasets so dynamic labels (e.g. "15sig")
+    // reflect the current selector state, not the chart-init snapshot.
+    // Cap at lineNames.length so envelope-shift datasets (`_shift_*`) stay
+    // out of the tooltip just like before.
     const items = lineNames
-      .map((n, i) => ({ i, n, v: vals[i] }))
+      .map((_, i) => ({ i, n: (ds[i] && ds[i].label) || lineNames[i], v: vals[i] }))
       .filter(({ i, v }) => c.isDatasetVisible(i) && v != null && !Number.isNaN(v))
       .sort((a, b) => b.v - a.v);
     const maxV = Math.max(0, ...items.map(it => it.v));
@@ -547,7 +661,7 @@ function render() {
         <line x1="0" y1="2" x2="20" y2="2" stroke="${lineColors[i]}" stroke-width="2" stroke-linecap="round" ${dashAttr}/>
       </svg>`;
       const transBadge = (i === 8 && adaptiveTrans)
-        ? `<span style="margin-left:6px;font-size:10px;color:${adaptiveTrans.includes('9sig') ? '#22d3ee' : '#f87171'};font-weight:600">${adaptiveTrans}</span>`
+        ? `<span style="margin-left:6px;font-size:10px;color:${adaptiveTrans.endsWith('sig') ? '#22d3ee' : '#f87171'};font-weight:600">${adaptiveTrans}</span>`
         : '';
       return `
         <div class="tt-row" style="position:relative">
@@ -618,7 +732,9 @@ function render() {
         const meta = c.getDatasetMeta(i);
         const pt = meta.data[lastIdx];
         if (!pt) return null;
-        return { y: pt.y, i, color: lineColors[i], name: lineNames[i], val: ds.data[lastIdx] };
+        // Prefer the live dataset label so dynamic names ("15sig", "SMA 150")
+        // update without a chart rebuild. Fall back to the chart-init snapshot.
+        return { y: pt.y, i, color: lineColors[i], name: ds.label || lineNames[i], val: ds.data[lastIdx] };
       }).filter(Boolean);
 
       // Sort by y position and de-overlap
@@ -746,7 +862,7 @@ function render() {
         if (!trans) return;
         const pt = meta.data[i];
         if (!pt) return;
-        const isToSig = trans.includes('9sig');
+        const isToSig = trans.endsWith('sig');
         const color = isToSig ? '#22d3ee' : '#f87171';
         const titleText = trans;            // "to 9sig" or "to TQQQ"
         const preferDir = isToSig ? -1 : 1; // 9sig above, TQQQ below
@@ -856,7 +972,7 @@ function render() {
       labels,
       datasets: [
         {
-          label: '9sig',
+          label: _initNsName,
           data: totalD,
           borderColor: '#22d3ee',
           backgroundColor: 'transparent',
@@ -868,7 +984,7 @@ function render() {
           hidden: true
         },
         {
-          label: '9sig TQQQ Holding',
+          label: _initNsName + ' Holding',
           data: tqqqValD,
           borderColor: '#38bdf8',
           backgroundColor: 'transparent',
@@ -914,11 +1030,11 @@ function render() {
           pointRadius: 0,
           pointHitRadius: 10,
           borderWidth: 2,
-          borderDash: [6, 3],
+          borderDash: [2, 5],
           hidden: true
         },
         {
-          label: '9sig TQQQ Target',
+          label: _initNsName + ' Target',
           data: targetD,
           borderColor: '#fb923c',
           backgroundColor: 'transparent',
@@ -931,7 +1047,7 @@ function render() {
           hidden: true
         },
         {
-          label: '9sig Cash',
+          label: _initNsName + ' Cash',
           data: cashD,
           borderColor: '#fbbf24',
           backgroundColor: 'rgba(251,191,36,0.05)',
@@ -955,7 +1071,7 @@ function render() {
           borderDash: [3, 3]
         },
         {
-          label: 'Adaptive',
+          label: 'Adaptive (WIP)',
           data: adaptiveD,
           borderColor: '#c084fc',
           backgroundColor: 'transparent',
@@ -970,6 +1086,45 @@ function render() {
           order: 100,         // highest order in Chart.js → drawn LAST → on top of every other line
           hidden: true,
           _transitions: adaptiveTransitions
+        },
+        {
+          label: 'B&H SOXL',
+          data: soxlD,
+          borderColor: '#14b8a6',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          borderWidth: 2,
+          borderDash: [12, 4],
+          hidden: true
+        },
+        {
+          label: `SMA ${smaWinForLabel}`,
+          data: smaD,
+          borderColor: '#a3e635',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          borderWidth: 2,
+          hidden: true,
+          _smaStates: smaStates
+        },
+        {
+          label: 'B&H QQQ5',
+          data: qqq5D,
+          borderColor: '#6366f1',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          borderWidth: 2,
+          borderDash: [5, 2, 2, 2],
+          hidden: true,
         },
         ...Array.from({ length: envelopeShiftCount }, (_, i) => ({
           label: '_shift_' + (i + 1),
@@ -1045,7 +1200,7 @@ function render() {
   } // end else (first render)
 
   // Stash latest data for the 9sig side panel's rebalance log table.
-  _logData = { log, bhPoints, qqqPoints, spyPoints };
+  _logData = { log, bhPoints, qqqPoints, spyPoints, soxlPoints, qqq5Points };
 
   // Compact legend chips (eye + name + CAGR) above the chart. Also re-renders
   // the open side panel if any (so its log table stays in sync with sliders).

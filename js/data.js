@@ -27,16 +27,37 @@ async function loadSPYDaily() {
   return parseDataFile(await resp.text());
 }
 
+async function loadSOXLDaily() {
+  const resp = await fetch('data/synthetic-soxl.tsv?v=baked');
+  return parseDataFile(await resp.text());
+}
+
+async function loadQQQ5Daily() {
+  const resp = await fetch('data/synthetic-qqq5.tsv?v=baked');
+  return parseDataFile(await resp.text());
+}
+
 // Merge daily TSVs by date. The TQQQ TSV already contains synthesized pre-2010
 // rows (baked by update_data.py), so this is a straight join — no synthesis here.
-function buildDaily(qqqDaily, tqqqDaily, spyDaily) {
+// SOXL data only starts 1994-05; pre-1994 rows get soxl: 0 and the simulate
+// loop skips contributions / valuation when that price is 0.
+function buildDaily(qqqDaily, tqqqDaily, spyDaily, soxlDaily, qqq5Daily) {
   const tqqqMap = new Map(tqqqDaily.map(d => [d[0], d[1]]));
-  const spyMap = new Map(spyDaily.map(d => [d[0], d[1]]));
+  const spyMap  = new Map(spyDaily.map(d => [d[0], d[1]]));
+  const soxlMap = new Map(soxlDaily.map(d => [d[0], d[1]]));
+  const qqq5Map = qqq5Daily ? new Map(qqq5Daily.map(d => [d[0], d[1]])) : null;
   const result = [];
   for (const [date, qqqPrice] of qqqDaily) {
     const tqqqPrice = tqqqMap.get(date);
     if (tqqqPrice != null) {
-      result.push({ date, qqq: qqqPrice, tqqq: tqqqPrice, spy: spyMap.get(date) || 0 });
+      result.push({
+        date,
+        qqq:  qqqPrice,
+        tqqq: tqqqPrice,
+        spy:  spyMap.get(date) || 0,
+        soxl: soxlMap.get(date) || 0,
+        qqq5: qqq5Map ? (qqq5Map.get(date) || 0) : 0,
+      });
     }
   }
   return result;
@@ -121,6 +142,56 @@ function getShiftedQuarterly(dayShift) {
     if (naturalIdx == null) return q;
     const shiftedIdx = Math.max(0, naturalIdx - dayShift);
     const d = daily[shiftedIdx];
-    return [d.date, d.tqqq, d.qqq, d.spy];
+    return [d.date, d.tqqq, d.qqq, d.spy, d.soxl, d.qqq5];
   });
+}
+
+// === Simple Moving Average precomputation ===
+// Used by the SMA timing strategy: at each rebalance check, compare the
+// signal asset's close to its N-day SMA on the same day. If above → hold
+// TQQQ; if below → move to cash (cash bucket accrues the configured rate).
+//
+// We precompute the full daily SMA series for every (asset, window) pair
+// the UI exposes, then sample at each monthly-data entry so the strategy
+// loop is an O(months) walk with no per-step recomputation. The heatmap
+// runs many simulations so this matters.
+const SMA_WINDOWS = [100, 150, 200, 250];
+const SMA_ASSETS  = ['qqq', 'spy'];
+let smaAtMonthlyByKey = null; // { 'qqq_200': [sma per monthlyData entry, or null] }
+
+function rollingSMA(values, window) {
+  const out = new Array(values.length);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v > 0) { sum += v; count++; }
+    if (i >= window) {
+      const drop = values[i - window];
+      if (drop > 0) { sum -= drop; count--; }
+    }
+    out[i] = count === window ? sum / window : null;
+  }
+  return out;
+}
+
+function precomputeSMASeries() {
+  smaAtMonthlyByKey = {};
+  if (!daily || !monthlyData || !dailyDateToIdx) return;
+  const seriesByAsset = {
+    qqq: daily.map(d => d.qqq),
+    spy: daily.map(d => d.spy),
+  };
+  for (const asset of SMA_ASSETS) {
+    const dailyVals = seriesByAsset[asset];
+    for (const w of SMA_WINDOWS) {
+      const dailySMA = rollingSMA(dailyVals, w);
+      // Map each monthlyData entry's date → SMA value on that day. Stored
+      // as a parallel array so simulateSMA can index by monthly position.
+      smaAtMonthlyByKey[asset + '_' + w] = monthlyData.map(([date]) => {
+        const idx = dailyDateToIdx.get(date);
+        return idx != null ? dailySMA[idx] : null;
+      });
+    }
+  }
 }

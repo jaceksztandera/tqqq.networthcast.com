@@ -1,19 +1,23 @@
 // Initialize: load CSV, derive data, set slider max, restore state, render
 (async function init() {
-  let QQQ_DAILY, TQQQ_DAILY, SPY_DAILY;
+  let QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, SOXL_DAILY, QQQ5_DAILY;
   try {
-    [QQQ_DAILY, TQQQ_DAILY, SPY_DAILY] = await Promise.all([loadQQQDaily(), loadTQQQDaily(), loadSPYDaily()]);
+    [QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, SOXL_DAILY, QQQ5_DAILY] = await Promise.all([
+      loadQQQDaily(), loadTQQQDaily(), loadSPYDaily(), loadSOXLDaily(), loadQQQ5Daily(),
+    ]);
   } catch(e) {
     console.error('Failed to load data:', e);
     return;
   }
-  daily = buildDaily(QQQ_DAILY, TQQQ_DAILY, SPY_DAILY);
-  quarterlyData = lastOfPeriod(daily, getQuarter).map(d => [d.date, d.tqqq, d.qqq, d.spy]);
-  monthlyData = lastOfPeriod(daily, getMonth).map(d => [d.date, d.tqqq, d.qqq, d.spy]);
+  daily = buildDaily(QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, SOXL_DAILY, QQQ5_DAILY);
+  quarterlyData = lastOfPeriod(daily, getQuarter).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.soxl, d.qqq5]);
+  monthlyData = lastOfPeriod(daily, getMonth).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.soxl, d.qqq5]);
   dailyDateToIdx = new Map(daily.map((d, i) => [d.date, i]));
   // Pre-index monthly entries per quarter so simulate()'s hot inner loops
   // become O(2-3) lookups instead of O(monthlyData.length) scans.
   precomputeMonthlyByQuarter();
+  precomputeSMASeries();
+  recomputeEarliestQIdx();
   envelopeShiftDays  = buildEnvelopeShifts();
   envelopeShiftCount = envelopeShiftDays.length;
   shiftedQuarterlyCache = envelopeShiftDays.map(getShiftedQuarterly);
@@ -58,6 +62,15 @@
   if (params.get('tu') !== null) { document.getElementById('select-tqqq-above').value = params.get('tu'); hasUrlParams = true; }
   if (params.get('td') !== null) { document.getElementById('select-tqqq-below').value = params.get('td'); hasUrlParams = true; }
   if (params.get('tw') !== null) { document.getElementById('select-tqqq-window').value = params.get('tw'); hasUrlParams = true; }
+  // SMA strategy params
+  if (params.get('sa') !== null) { document.getElementById('select-sma-asset').value      = params.get('sa'); hasUrlParams = true; }
+  if (params.get('sw') !== null) { document.getElementById('select-sma-window').value     = params.get('sw'); hasUrlParams = true; }
+  if (params.get('su') !== null) { document.getElementById('select-sma-underlying').value = params.get('su'); hasUrlParams = true; }
+  // 9sig underlying + signal-line growth
+  if (params.get('nu') !== null) { document.getElementById('select-9sig-underlying').value = params.get('nu'); hasUrlParams = true; }
+  if (params.get('ng') !== null) { document.getElementById('select-9sig-growth').value     = params.get('ng'); hasUrlParams = true; }
+  if (params.get('nc') !== null) { document.getElementById('select-9sig-crashdrop').value  = params.get('nc'); hasUrlParams = true; }
+  if (params.get('ns') !== null) { document.getElementById('select-9sig-spike').value      = params.get('ns'); hasUrlParams = true; }
   // Toggles + envelope opacity
   if (params.get('l')  !== null) { setLogScale(params.get('l') === '1'); hasUrlParams = true; }
   if (params.get('ev') !== null) { document.getElementById('toggle-envelope').checked    = params.get('ev') === '1'; hasUrlParams = true; }
@@ -107,6 +120,9 @@
   document.getElementById('disp-envelope-opacity').textContent =
     'opacity ' + (+document.getElementById('slider-envelope-opacity').value / 100).toFixed(2);
   window._dualRange.updateUI();
+  // Apply the restored 9sig growth-% to the static "9sig" labels in the
+  // analytics modal before first render (e.g. URL ?ng=15 → "15sig").
+  if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   render();
 
   // Apply post-render shared state: dataset visibility + analytics modal.
