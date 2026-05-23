@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strategies Simulator · Backtesting</title>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XJ1P981CGQ"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XJ1P981CGQ');
+</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230a0e17'/><polyline points='4,24 10,18 16,20 22,10 28,6' fill='none' stroke='%2338bdf8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/><circle cx='28' cy='6' r='2' fill='%2338bdf8'/></svg>">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" defer></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Archived-version notice. This is the frozen v1 build, served only so old
+     shared links keep resolving. The CTA clears any saved state (so the latest
+     app starts clean) and sends the user to the current version at the site
+     root. We strip the query string on the way out so the root's
+     redirect-old-links guard doesn't bounce them straight back here. -->
+<div id="v1-archive-banner" style="position:sticky;top:0;z-index:9999;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;justify-content:center;padding:10px 44px 10px 16px;background:rgba(251,146,60,0.14);border-bottom:1px solid #fb923c;color:#fde4cf;font:500 13px/1.4 'DM Sans',sans-serif;text-align:center;">
+  <span>You're viewing an <strong>archived version</strong> of this simulator, kept only so older shared links keep working. A newer version is available.</span>
+  <button type="button" onclick="goToLatestVersion()" style="flex-shrink:0;display:inline-flex;align-items:center;height:30px;padding:0 14px;background:#fb923c;border:0;border-radius:6px;color:#1a1205;font:600 13px 'DM Sans',sans-serif;cursor:pointer;">
+    Clear data &amp; go to the latest version
+  </button>
+  <button type="button" onclick="dismissArchiveBanner()" aria-label="Dismiss" title="Dismiss"
+    style="position:absolute;top:6px;right:8px;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;color:#fde4cf;font:400 18px/1 'DM Sans',sans-serif;cursor:pointer;">&times;</button>
+</div>
+<script>
+  // Dismiss is intentionally NOT persisted — the banner reappears on every
+  // refresh so the "archived version" notice stays hard to miss.
+  function dismissArchiveBanner() {
+    var b = document.getElementById('v1-archive-banner');
+    if (b) b.style.display = 'none';
+  }
+  function goToLatestVersion() {
+    try {
+      // Clear both this build's keys and the latest app's keys so the new
+      // version opens with a fresh, valid configuration.
+      ['9sig-sliders', 'hidden-datasets', '9sig-app-version', '9sig-panel-width']
+        .forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
+    // Site root, no query string → no bounce back to /old/v1/.
+    window.location.replace('../../');
+  }
+</script>
+
+<div class="header">
+  <h1>Strategies Simulator</h1>
+  <p>Backtesting &middot; synthetic TQQQ (3x QQQ) &middot; 1938&ndash;2026</p>
+  <button id="share-btn" onclick="shareConfig()" aria-label="Share current configuration" title="Share current configuration">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+    <span class="share-btn-label">Share current configuration</span>
+  </button>
+  <div id="share-toast">Link copied to clipboard</div>
+</div>
+
+<div class="layout">
+  <div class="panel">
+    <h2>Parameters</h2>
+
+    <div class="control-group">
+      <label>Initial Investment</label>
+      <div class="value-display" id="disp-initial">$10,000</div>
+      <input type="range" id="slider-initial" min="0" max="1000" step="1" value="333">
+    </div>
+
+    <div class="control-group">
+      <label>Monthly Contribution</label>
+      <div class="value-display" id="disp-monthly">$500</div>
+      <input type="range" id="slider-monthly" min="0" max="100000" step="50" value="500">
+    </div>
+
+    <div class="section-toggle-row">
+      <button id="advanced-toggle" onclick="toggleAdvanced()">+ advanced</button>
+    </div>
+
+    <div id="advanced-section">
+      <div class="control-group">
+        <label>Monthly Contribution Annual Increase</label>
+        <div class="value-display" id="disp-raise">3%</div>
+        <input type="range" id="slider-raise" min="0" max="20" step="0.5" value="3">
+      </div>
+
+      <div class="control-group">
+        <label>Cash Interest Rate (Annual)</label>
+        <div class="value-display" id="disp-rate">4.0%</div>
+        <!-- 0–1000 slider position, mapped through sliderToRate() to a 0–100% rate
+             with a quadratic curve (fine resolution near 0, big steps near 100). -->
+        <input type="range" id="slider-rate" min="0" max="1000" step="1" value="200">
+      </div>
+
+    </div>
+  </div>
+
+  <div class="right-col">
+    <div class="panel" style="position:relative;">
+      <div id="chart-legend" class="chart-legend"></div>
+      <div class="chart-container">
+        <canvas id="mainChart"></canvas>
+        <button type="button" id="chart-log-toggle" class="chart-log-toggle" aria-pressed="false" title="Toggle logarithmic Y-axis">log</button>
+      </div>
+      <div id="custom-tooltip"></div>
+
+      <div class="control-group" style="margin-top:18px;margin-bottom:0">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <div><label>Entry Quarter</label><div class="value-display period" id="disp-entry">Q1 1999</div></div>
+          <div style="text-align:right"><label>Exit Quarter</label><div class="value-display period" id="disp-exit">Q1 2026</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button type="button" class="period-play" id="period-play-left" aria-pressed="false" title="Step / play backward">◀</button>
+          <div class="dual-range" id="period-range" style="flex:1">
+            <div class="track"></div>
+            <div class="fill"></div>
+            <div class="thumb" data-handle="entry"></div>
+            <div class="thumb" data-handle="exit"></div>
+          </div>
+          <button type="button" class="period-play" id="period-play-right" aria-pressed="false" title="Step / play forward">▶</button>
+        </div>
+        <input type="hidden" id="slider-entry" value="0">
+        <input type="hidden" id="slider-exit" value="108">
+      </div>
+
+      <div style="margin-top:14px">
+        <button id="analytics-toggle" onclick="toggleAnalytics()">analytics grid</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-footer">
+  <a href="https://9sig.networthcast.com/data/" target="_blank" rel="noopener">Long-history TQQQ / QQQ / SPY data &rarr;</a>
+</footer>
+
+<div id="analytics-modal" class="modal" hidden>
+  <div class="modal-backdrop" onclick="toggleAnalytics()"></div>
+  <div class="modal-content">
+    <div class="modal-body">
+      <div class="analytics-chart">
+        <div class="analytics-chart-header">
+          <div class="analytics-chart-title-row">
+            <div class="analytics-actions-left">
+              <button type="button" class="modal-icon-btn" id="analytics-share" onclick="shareConfig()" title="Copy share link" aria-label="Share">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              </button>
+              <button type="button" class="modal-icon-btn" id="analytics-download" onclick="downloadAnalytics()" title="Download as image" aria-label="Download">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
+            </div>
+            <h3 id="analytics-chart-title" hidden></h3>
+            <div class="analytics-strategy-options" id="analytics-strategy-options">
+              <button type="button" data-strat="adaptive" class="active">Adaptive (WIP)</button>
+              <button type="button" data-strat="9sig">9sig</button>
+              <button type="button" data-strat="bh-tqqq">B&amp;H TQQQ</button>
+              <button type="button" data-strat="bh-qqq5">B&amp;H QQQ5</button>
+              <button type="button" data-strat="bh-soxl">B&amp;H SOXL</button>
+              <button type="button" data-strat="sma">SMA</button>
+              <button type="button" data-strat="bh-qqq">B&amp;H QQQ</button>
+              <button type="button" data-strat="bh-spy">B&amp;H SPY</button>
+            </div>
+            <div class="analytics-baseline-wrap">
+              <span class="analytics-baseline-label">
+                <span>color by vs</span>
+                <span>performance of</span>
+              </span>
+              <select id="analytics-baseline" class="analytics-baseline-select" title="Color baseline">
+                <option value="compounded" selected>Compounded Cash</option>
+                <option value="bh-spy">B&amp;H SPY</option>
+                <option value="bh-qqq">B&amp;H QQQ</option>
+                <option value="adaptive">Adaptive (WIP)</option>
+                <option value="9sig">9sig</option>
+                <option value="bh-tqqq">B&amp;H TQQQ</option>
+                <option value="bh-qqq5">B&amp;H QQQ5</option>
+                <option value="bh-soxl">B&amp;H SOXL</option>
+                <option value="sma">SMA</option>
+                <option value="custom">Custom Target ($)</option>
+                <option value="custom-pct">Custom Growth (% per year)</option>
+              </select>
+              <input type="text" id="analytics-baseline-custom-input" class="analytics-baseline-custom" placeholder="$1M" hidden>
+              <input type="range" id="analytics-baseline-pct-input" class="analytics-baseline-pct-slider" min="-100" max="100" step="1" value="20" hidden>
+              <span id="analytics-baseline-pct-display" class="analytics-baseline-pct-display" hidden>+20%</span>
+            </div>
+            <div class="analytics-chart-actions">
+              <button type="button" class="modal-close" onclick="toggleAnalytics()" aria-label="Close">×</button>
+            </div>
+          </div>
+          <div class="analytics-metrics" id="analytics-metrics"></div>
+          <div class="analytics-chart-sub">rows: year you started investing &nbsp;·&nbsp; columns: N years later &nbsp;·&nbsp; cell color: log of value ÷ invested-compounded baseline (1× = break-even, anchored at slate midpoint)</div>
+          <div class="analytics-progress" id="analytics-progress" hidden>
+            <div class="analytics-progress-track"><div class="analytics-progress-bar" id="analytics-progress-bar"></div></div>
+            <span id="analytics-progress-text">0 / 0</span>
+          </div>
+        </div>
+        <div id="analytics-heatmap" class="heatmap-wrap"></div>
+      </div>
+    </div>
+  </div>
+  <div id="heatmap-tooltip" class="heatmap-tooltip" hidden></div>
+</div>
+
+<aside id="strategy-panel" class="strategy-panel" aria-hidden="true">
+  <div class="strategy-panel-backdrop"></div>
+  <div class="strategy-panel-content">
+    <div class="strategy-panel-header">
+      <h3 id="strategy-panel-title">Strategy</h3>
+      <button type="button" class="strategy-panel-close" aria-label="Close">×</button>
+    </div>
+    <div class="strategy-panel-body" id="strategy-panel-body">
+    </div>
+  </div>
+</aside>
+
+<div id="9sig-controls-host" hidden>
+  <div class="control-group" id="9sig-controls">
+    <div class="adaptive-line">
+      Trade
+      <select class="inline-select" id="select-9sig-underlying">
+        <option value="tqqq" selected>TQQQ</option>
+        <option value="qqq5">QQQ5</option>
+        <option value="soxl">SOXL</option>
+      </select>
+      and grow the signal line by
+      <select class="inline-select" id="select-9sig-growth">
+        <option value="6">6%</option>
+        <option value="7">7%</option>
+        <option value="8">8%</option>
+        <option value="9" selected>9%</option>
+        <option value="10">10%</option>
+        <option value="12">12%</option>
+        <option value="15">15%</option>
+        <option value="18">18%</option>
+        <option value="20">20%</option>
+        <option value="25">25%</option>
+      </select> per quarter
+    </div>
+    <div class="adaptive-line">
+      30-down no-sell when stock drops
+      <select class="inline-select" id="select-9sig-crashdrop">
+        <option value="30" selected>30%</option>
+        <option value="60">60%</option>
+        <option value="90">90%</option>
+        <option value="120">120% (off)</option>
+        <option value="150">150% (off)</option>
+        <option value="180">180% (off)</option>
+      </select> below 2-year high
+    </div>
+    <div class="adaptive-line">
+      Spike-reset to 60% when quarter gain hits
+      <select class="inline-select" id="select-9sig-spike">
+        <option value="0">off</option>
+        <option value="50">50%</option>
+        <option value="75">75%</option>
+        <option value="100" selected>100%</option>
+        <option value="150">150%</option>
+        <option value="200">200%</option>
+        <option value="300">300%</option>
+        <option value="400">400%</option>
+      </select>
+    </div>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4">
+      Signal line: 9%/q canonical for 3×; raise for 5× (QQQ5). 30-down: skip
+      selling for up to 2 consecutive quarters when stock is N% below its
+      2-yr high — values past 100% effectively disable the rule. Spike-reset:
+      hard-rebalance to 60% stock when the underlying gains N% in a quarter.
+    </div>
+  </div>
+</div>
+
+<div id="envelope-controls-host" hidden>
+  <div class="control-group" id="envelope-controls">
+    <label>What If You Rebalanced on a Different Day?</label>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:6px 0 8px;font-size:12px">
+      <input type="checkbox" id="toggle-envelope" style="cursor:pointer;accent-color:var(--accent)">
+      <span style="color:var(--text)">Show alternate runs</span>
+    </label>
+    <div class="value-display" id="disp-envelope-opacity" style="font-size:14px">opacity 0.10</div>
+    <input type="range" id="slider-envelope-opacity" min="1" max="50" step="1" value="10">
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4" id="envelope-note">
+      Each ghost line is the same 9sig strategy with rebalance shifted to a different day — see how much the outcome depends on when you rebalance.
+    </div>
+  </div>
+</div>
+
+<div id="adaptive-controls-host" hidden>
+  <div class="control-group" id="adaptive-controls">
+    <div class="adaptive-line">
+      Switch to <strong>9sig</strong> when TQQQ is
+      <select class="inline-select" id="select-tqqq-above"></select>× as much as 9sig
+    </div>
+    <div class="adaptive-line">
+      Switch to <strong>all-in TQQQ</strong> when 9sig is
+      <select class="inline-select" id="select-tqqq-below"></select>× as much as TQQQ
+    </div>
+    <div class="adaptive-line">
+      measured over the last
+      <select class="inline-select" id="select-tqqq-window"></select> year period
+    </div>
+  </div>
+</div>
+
+<div id="sma-controls-host" hidden>
+  <div class="control-group" id="sma-controls">
+    <div class="adaptive-line">
+      Hold
+      <select class="inline-select" id="select-sma-underlying">
+        <option value="tqqq" selected>TQQQ</option>
+        <option value="qqq5">QQQ5</option>
+        <option value="soxl">SOXL</option>
+      </select>
+      while
+      <select class="inline-select" id="select-sma-asset">
+        <option value="qqq" selected>QQQ</option>
+        <option value="spy">SPY</option>
+      </select>
+      closes above its
+      <select class="inline-select" id="select-sma-window">
+        <option value="100">100</option>
+        <option value="150">150</option>
+        <option value="200" selected>200</option>
+        <option value="250">250</option>
+      </select>-day SMA
+    </div>
+    <div class="adaptive-line">
+      otherwise move to <strong>cash</strong> (earning the configured rate).
+    </div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/simulate.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/analytics.js"></script>
+<script src="js/init.js"></script>
+
+</body>
+</html>

@@ -187,30 +187,6 @@
     margin-bottom: 6px;
   }
 
-  /* Compact parameter rows: label on the left, value on the right at the
-     same vertical level, slider underneath spanning both columns. Scoped
-     to the left Parameters panel only — the what-if-controls block and
-     other panel-injected control-groups need their stacked default layout
-     because their middle children (e.g. "Show alternate runs" toggle)
-     would otherwise get shoved out of place by the grid. */
-  .layout > .panel:first-child .control-group:has(> label):has(> .value-display) {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: baseline;
-    column-gap: 12px;
-    row-gap: 12px;
-    margin-bottom: 22px;
-  }
-  .layout > .panel:first-child .control-group:has(> label):has(> .value-display) > label { margin-bottom: 0; }
-  .layout > .panel:first-child .control-group:has(> label):has(> .value-display) > .value-display {
-    margin-bottom: 0;
-    text-align: right;
-    font-size: 14px;
-  }
-  .layout > .panel:first-child .control-group:has(> label):has(> .value-display) > input[type="range"] {
-    grid-column: 1 / -1;
-  }
-
   .control-group .value-display.period {
     font-size: 15px;
   }
@@ -243,40 +219,11 @@
     border: none;
   }
 
-  /* Line 1: Monthly Contribution title (left) + $ value (right). */
-  .mc-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 2px;
-  }
-  .mc-head > label { margin-bottom: 0; }
-  .mc-head .value-display {
-    margin-bottom: 0;
-    font-size: 14px;
-    text-align: right;
-  }
-  /* Line 2: small "annual increase" dropdown on its own line. Selectors are
-     extra-specific so they beat `.control-group label` and `.inline-select`
-     (both 12px), which previously won and kept this from shrinking. */
-  .control-group .mc-raise {
-    display: flex;
-    align-items: baseline;
-    gap: 3px;
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: 0;
-    color: var(--text-muted);
-    margin: 0 0 12px;
-  }
-  .control-group .mc-raise .raise-select {
-    font-size: 10px;
-    padding: 0 1px 0 3px;
-    margin: 0;
-    border-radius: 3px;
-    cursor: pointer;
+  #advanced-section { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
+  #advanced-section.open { max-height: 1000px; }
+
+  .section-toggle-row {
+    margin-bottom: 18px;
   }
 
   .adaptive-line {
@@ -304,70 +251,6 @@
   }
   .inline-select:hover { border-color: var(--accent); }
   .inline-select:focus { outline: none; border-color: var(--accent); }
-
-  /* === Preview dropdowns (9sig panel) ================================== */
-  /* The native <select> is kept as the source of truth but hidden; a custom
-     trigger button + popup (with per-option result bars) stands in for it. */
-  .pdrop { position: relative; display: inline-block; }
-  .pdrop-native-hidden {
-    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-    overflow: hidden; clip: rect(0 0 0 0); border: 0;
-  }
-  .pdrop-trigger {
-    display: inline-flex; align-items: center; gap: 6px;
-    /* inherits .inline-select look; just add a caret + min-width */
-  }
-  .pdrop-trigger .pdrop-caret { font-size: 9px; opacity: 0.7; }
-  .pdrop-trigger.pdrop-open { border-color: var(--accent); }
-
-  .pdrop-popup {
-    position: fixed;
-    z-index: 11000;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.55);
-    padding: 4px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .pdrop-head {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-muted); padding: 4px 8px 6px; white-space: nowrap;
-  }
-  /* Label column width (--pdrop-label-w) is measured per-popup from the
-     widest label and applied to every row, so the bar tracks all start at
-     the same x regardless of label length. Value column is a fixed width so
-     bars don't jump when the "…" placeholders fill with dollar figures. */
-  .pdrop-row {
-    display: grid;
-    grid-template-columns: var(--pdrop-label-w, auto) 1fr 56px;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-  .pdrop-row:hover { background: rgba(34,211,238,0.10); }
-  .pdrop-row.selected { background: rgba(34,211,238,0.16); }
-  .pdrop-rlabel { color: var(--accent); font-size: 12px; font-weight: 500; white-space: nowrap; }
-  .pdrop-track {
-    height: 8px; border-radius: 4px; background: rgba(148,163,184,0.14);
-    overflow: hidden;
-  }
-  .pdrop-fill {
-    display: block; height: 100%; width: 0;
-    background: var(--accent); border-radius: 4px;
-    transition: width 0.25s ease;
-  }
-  .pdrop-row.best .pdrop-fill { background: var(--green, #4ade80); }
-  .pdrop-rval {
-    font-size: 11px; color: var(--text); white-space: nowrap; text-align: right;
-  }
-  .pdrop-row.best .pdrop-rval { color: var(--green, #4ade80); font-weight: 600; }
 
   #advanced-toggle {
     width: 100%;
@@ -522,34 +405,32 @@
     letter-spacing: 1px;
     color: var(--text-muted);
   }
-  /* Heatmap controls as a sentence: "Visualize [X] in heatmap, colored by it
-     vs performance of [Y]." Inline-dropdown convention, matching the sidebar. */
-  .analytics-sentence {
-    flex: 1 1 auto;
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 5px 6px;
-    font: 600 11px 'DM Sans', sans-serif;
-    color: var(--text-muted);
-    line-height: 1.5;
-  }
-  .analytics-sentence .as-text { white-space: nowrap; }
-  .analytics-sentence .analytics-strat-select,
-  .analytics-sentence .analytics-baseline-select {
-    max-width: 200px;
-    padding: 3px 8px;
+  .analytics-strategy-options {
+    display: flex;
+    gap: 3px;
+    padding: 2px;
     background: rgba(15, 23, 42, 0.6);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font: 700 11px 'DM Sans', sans-serif;
-    letter-spacing: 0.2px;
-    cursor: pointer;
-    transition: color 0.15s, border-color 0.15s;
+    border-radius: 6px;
   }
-  .analytics-sentence select:hover { border-color: var(--accent); }
-  .analytics-sentence select:focus { outline: none; border-color: var(--accent); }
+  .analytics-strategy-options button {
+    padding: 3px 9px;
+    font: 600 10px 'DM Sans', sans-serif;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+  .analytics-strategy-options button:hover {
+    color: var(--text);
+  }
+  .analytics-strategy-options button.active {
+    background: var(--accent);
+    color: #0a0e17;
+  }
   .analytics-baseline-wrap {
     display: inline-flex;
     align-items: center;
@@ -605,35 +486,8 @@
   .analytics-metrics {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 16px;
-    margin: 4px 0 0;
-  }
-  /* One labeled group per strategy ("With <X>'s parameters …" etc.). */
-  .analytics-metrics .ap-group {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
     gap: 4px;
-  }
-  .analytics-metrics .ap-label {
-    font: 700 9px 'DM Sans', sans-serif;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
-    margin-right: 2px;
-  }
-  .analytics-metrics .ap-label b {
-    color: var(--accent);
-    font-weight: 700;
-    text-transform: none;
-    letter-spacing: 0;
-    font-size: 10px;
-  }
-  .analytics-metrics .ap-none {
-    font-size: 10px;
-    color: var(--text-muted);
-    opacity: 0.6;
-    font-style: italic;
+    margin: 4px 0 0;
   }
   .analytics-metrics .metric {
     display: inline-flex;
@@ -646,7 +500,6 @@
     font-size: 10px;
     color: var(--text-muted);
     font-family: 'DM Sans', sans-serif;
-    cursor: pointer; /* whole pill opens its dropdown */
   }
   .analytics-metrics .metric strong {
     color: var(--text);
@@ -1198,17 +1051,11 @@
      chip grows to fill its row but has a minimum width so names never get
      ellipsis'd into nothing. Wide viewports pack many per row; narrow ones
      wrap to fewer columns automatically. */
-  /* Top-of-chart legend: 2x2 grid of chips (9sig / SMA / B&H / Invested).
-     Each chip stretches to fill its column so all four read at the same
-     visual weight. On narrow viewports the grid collapses to one column. */
   .chart-legend {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 12px;
-  }
-  @media (max-width: 600px) {
-    .chart-legend { grid-template-columns: 1fr; }
   }
   .legend-chip {
     display: flex;
@@ -1321,617 +1168,24 @@
   }
   .legend-chip.legend-hidden .legend-more { color: var(--text-muted); }
 
-  /* ===== Saved configurations (Parameters panel) ===== */
-  #saved-configs { margin-top: 18px; }
-  .saved-configs-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-  }
-  .saved-configs-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .saved-config-pill {
-    background: rgba(30, 42, 63, 0.45);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 8px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
-  }
-  .saved-config-pill:hover {
-    background: rgba(30, 42, 63, 0.85);
-    border-color: rgba(34, 211, 238, 0.4);
-  }
-  .saved-config-pill .sc-top {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .saved-config-pill .sc-eye {
-    width: 18px; height: 18px;
-    flex-shrink: 0;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .saved-config-pill .sc-eye svg { width: 12px; height: 12px; }
-  .saved-config-pill:hover .sc-eye { color: var(--accent); }
-  /* Eye + drag handle stacked in the left gutter (grip sits under the eye). */
-  .saved-config-pill .sc-handle-col {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1px;
-    flex-shrink: 0;
-  }
-  .saved-config-pill .sc-drag {
-    width: 18px; height: 13px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    opacity: 0.5;
-    cursor: grab;
-  }
-  .saved-config-pill .sc-drag:hover { opacity: 1; color: var(--accent); }
-  .saved-config-pill .sc-drag:active { cursor: grabbing; }
-  .saved-config-pill.dragging { opacity: 0.55; border-color: var(--accent); background: rgba(34, 211, 238, 0.08); }
-  .saved-config-pill .sc-dot {
-    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  }
-  .saved-config-pill .sc-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    font: 500 11px 'DM Sans', sans-serif;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .saved-config-pill .sc-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    flex-shrink: 0;
-  }
-  .saved-config-pill .sc-actions button {
-    padding: 3px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    line-height: 0;
-    transition: color 0.15s, background 0.15s;
-  }
-  .saved-config-pill .sc-edit:hover {
-    background: rgba(34, 211, 238, 0.18);
-    color: var(--accent);
-  }
-  .saved-config-pill .sc-delete:hover {
-    background: rgba(248, 113, 113, 0.18);
-    color: var(--red);
-  }
-  .saved-config-pill .sc-metrics {
-    display: flex;
-    gap: 12px;
-    margin-top: 4px;
-    padding-left: 24px;
-  }
-  .saved-config-pill .sc-metric {
-    display: inline-flex;
-    gap: 4px;
-    align-items: baseline;
-  }
-  .saved-config-pill .sc-metric-label {
-    font-size: 8px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
-  }
-  .saved-config-pill .sc-metric-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 600;
-    font-size: 10px;
-  }
-  .saved-config-pill .sc-metric-value.positive { color: var(--green); }
-  .saved-config-pill .sc-metric-value.negative { color: var(--red); }
-  .saved-config-pill.is-hidden { opacity: 0.4; }
-  .saved-config-pill.is-hidden .sc-name {
-    text-decoration: line-through;
-    text-decoration-color: rgba(148, 163, 184, 0.6);
-  }
-
-  /* In-sidebar line-color picker (custom popup so the OK button lives inside
-     the component). */
-  .config-colorbar {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 4px 0 12px;
-  }
-  .config-colorbar-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-  .line-color-trigger {
-    width: 40px;
-    height: 26px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    cursor: pointer;
-    box-shadow: inset 0 0 0 2px var(--surface2);
-  }
-  .line-color-pop {
-    position: fixed;
-    z-index: 200;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-    width: max-content;
-  }
-  .lc-swatches {
-    display: grid;
-    grid-template-columns: repeat(10, 18px);
-    gap: 6px;
-    margin-bottom: 10px;
-  }
-  .lc-swatch {
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 50%;
-    cursor: pointer;
-    transition: transform 0.1s;
-  }
-  .lc-swatch:hover { transform: scale(1.18); }
-  .lc-swatch.is-sel {
-    box-shadow: 0 0 0 2px var(--surface2), 0 0 0 3px var(--accent);
-  }
-  .lc-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .lc-hash {
-    color: var(--text-muted);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-  }
-  .lc-hex {
-    width: 80px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    padding: 5px 8px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    color: var(--text);
-    outline: none;
-    text-transform: lowercase;
-  }
-  .lc-hex:focus { border-color: var(--accent); }
-  .lc-ok {
-    margin-left: auto;
-    padding: 5px 14px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 5px;
-    border: 1px solid rgba(34, 211, 238, 0.5);
-    background: rgba(34, 211, 238, 0.14);
-    color: var(--accent);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .lc-ok:hover { background: rgba(34, 211, 238, 0.26); }
-
-  /* Styled confirm dialog (saved-strategy delete) */
-  .sc-modal-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 320;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(2, 6, 18, 0.55);
-  }
-  .sc-modal {
-    width: 320px;
-    max-width: 90vw;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-  }
-  .sc-modal-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 8px;
-  }
-  .sc-modal-body {
-    font-size: 13px;
-    color: var(--text-muted);
-    line-height: 1.5;
-    margin-bottom: 18px;
-  }
-  .sc-modal-body b { color: var(--text); font-weight: 600; }
-  .sc-modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-  }
-  .sc-modal-btn {
-    padding: 8px 16px;
-    font: 600 13px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--surface2);
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .sc-modal-btn:hover { border-color: var(--accent); }
-  .sc-modal-btn.danger {
-    border-color: rgba(248, 113, 113, 0.5);
-    background: rgba(248, 113, 113, 0.14);
-    color: var(--red);
-  }
-  .sc-modal-btn.danger:hover { background: rgba(248, 113, 113, 0.26); }
-
-  /* Custom-strategy build modal */
-  .builder-modal {
-    width: 560px;
-    max-width: 94vw;
-    max-height: 88vh;
-    overflow-y: auto;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 22px;
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
-  }
-  .builder-modal .sc-modal-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
-  .builder-help { font-size: 13px; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
-  .builder-help b { color: var(--text); }
-  .builder-step-label {
-    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-muted); margin: 16px 0 6px;
-  }
-  .builder-textarea {
-    width: 100%;
-    min-height: 140px;
-    resize: vertical;
-    font: 400 14px 'DM Sans', sans-serif;
-    line-height: 1.55;
-    background: var(--surface2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-    outline: none;
-  }
-  .builder-textarea:focus { border-color: var(--accent); }
-  .builder-textarea::placeholder { color: var(--text-muted); }
-  .builder-textarea.code {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    background: #0b1120;
-    color: #cbd5e1;
-    white-space: pre;
-    min-height: 220px;
-    tab-size: 2;
-  }
-  .builder-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
-
-  /* Custom-strategy sidebar (result view) */
-  .custom-edit-btn {
-    width: 100%;
-    padding: 9px 12px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid rgba(34, 211, 238, 0.5);
-    background: rgba(34, 211, 238, 0.14);
-    color: var(--accent);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .custom-edit-btn:hover { background: rgba(34, 211, 238, 0.26); }
-  .custom-desc-readout {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    font-size: 12px;
-    line-height: 1.55;
-    color: var(--text-muted);
-    white-space: pre-wrap;
-  }
-  .custom-error-hint { color: var(--text-muted); font-weight: 400; }
-
-  /* + Custom strategy button (Parameters panel) */
-  .new-custom-btn {
-    margin-top: 12px;
-    width: 100%;
-    padding: 9px 10px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px dashed var(--border);
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
-  }
-  .new-custom-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(34, 211, 238, 0.06); }
-
-  /* Custom strategy pill badge */
-  .saved-config-pill .sc-badge {
-    flex-shrink: 0;
-    font: 600 9px 'JetBrains Mono', monospace;
-    padding: 1px 5px;
-    border-radius: 4px;
-    background: rgba(34, 211, 238, 0.16);
-    color: var(--accent);
-    text-transform: none;
-  }
-  .saved-config-pill .sc-badge.warn { background: rgba(251, 191, 36, 0.18); color: #fbbf24; }
-
-  /* Custom strategy sidebar */
-  .custom-warn {
-    margin: 4px 0 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(251, 191, 36, 0.45);
-    background: rgba(251, 191, 36, 0.10);
-    color: var(--text);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  .custom-run-btn {
-    display: block;
-    margin-top: 8px;
-    padding: 7px 12px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid rgba(251, 191, 36, 0.6);
-    background: rgba(251, 191, 36, 0.16);
-    color: #fbbf24;
-    cursor: pointer;
-  }
-  .custom-run-btn:hover { background: rgba(251, 191, 36, 0.28); }
-  .custom-stats {
-    display: flex;
-    gap: 16px;
-    margin: 4px 0 4px;
-    flex-wrap: wrap;
-  }
-  .custom-stat { display: flex; flex-direction: column; gap: 2px; }
-  .custom-stat span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
-  .custom-stat b { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text); }
-  .custom-stat b.positive { color: var(--green); }
-  .custom-stat b.negative { color: var(--red); }
-  .custom-params { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-  .custom-param-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-  }
-  .custom-param-row label { font-size: 12px; color: var(--text); }
-  .custom-param-row .inline-select,
-  .custom-param-row .custom-text-input {
-    background: var(--surface2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 5px 8px;
-    font-size: 12px;
-    max-width: 55%;
-  }
-  .custom-param-row .custom-text-input { width: 90px; }
-  .custom-param-row .inline-select:focus,
-  .custom-param-row .custom-text-input:focus { outline: none; border-color: var(--accent); }
-  .custom-error {
-    margin-top: 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(248, 113, 113, 0.5);
-    background: rgba(248, 113, 113, 0.10);
-    color: #fca5a5;
-    font-size: 12px;
-    line-height: 1.5;
-    word-break: break-word;
-  }
-  .custom-error b { color: var(--red); }
-  .custom-steps { margin: 2px 0 10px; display: flex; flex-direction: column; gap: 6px; }
-  .custom-step { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
-  .custom-step b { color: var(--accent); margin-right: 3px; }
-  .custom-copy-btn {
-    width: 100%;
-    padding: 9px 12px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid rgba(34, 211, 238, 0.5);
-    background: rgba(34, 211, 238, 0.14);
-    color: var(--accent);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .custom-copy-btn:hover { background: rgba(34, 211, 238, 0.26); }
-  .custom-desc {
-    width: 100%;
-    min-height: 90px;
-    resize: vertical;
-    font: 400 13px 'DM Sans', sans-serif;
-    line-height: 1.5;
-    background: var(--surface2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    outline: none;
-    margin-bottom: 8px;
-  }
-  .custom-desc:focus { border-color: var(--accent); }
-  .custom-desc::placeholder { color: var(--text-muted); }
-  .custom-code-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 4px 0 6px; }
-  .custom-code-hint code {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    background: var(--surface2);
-    padding: 1px 4px;
-    border-radius: 3px;
-    color: var(--accent);
-  }
-  .custom-code {
-    width: 100%;
-    min-height: 220px;
-    resize: vertical;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    background: #0b1120;
-    color: #cbd5e1;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    outline: none;
-    white-space: pre;
-    overflow: auto;
-    tab-size: 2;
-  }
-  .custom-code:focus { border-color: var(--accent); }
-  .custom-apply-btn {
-    margin-top: 8px;
-    padding: 8px 16px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid rgba(34, 211, 238, 0.5);
-    background: rgba(34, 211, 238, 0.14);
-    color: var(--accent);
-    cursor: pointer;
-  }
-  .custom-apply-btn:hover { background: rgba(34, 211, 238, 0.26); }
-  .custom-log-wrap { max-height: 320px; overflow: auto; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; }
-  table.custom-log { width: 100%; border-collapse: collapse; font-size: 11px; }
-  table.custom-log th, table.custom-log td {
-    padding: 5px 8px;
-    text-align: right;
-    white-space: nowrap;
-    border-bottom: 1px solid var(--border);
-  }
-  table.custom-log th {
-    position: sticky;
-    top: 0;
-    background: var(--surface2);
-    color: var(--text-muted);
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 9px;
-    letter-spacing: 0.4px;
-  }
-  table.custom-log td { color: var(--text); font-family: 'JetBrains Mono', monospace; }
-  table.custom-log td:first-child, table.custom-log th:first-child { text-align: left; }
-
-  /* In-sidebar "save as / update configuration" bar */
-  .config-savebar {
-    display: flex;
-    gap: 8px;
-    margin: 4px 0 16px;
-  }
-  .config-savebar-btn {
-    flex: 1 1 auto;
-    padding: 8px 10px;
-    font: 600 12px 'DM Sans', sans-serif;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--surface2);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .config-savebar-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .config-savebar-btn.primary {
-    background: rgba(34, 211, 238, 0.14);
-    border-color: rgba(34, 211, 238, 0.5);
-    color: var(--accent);
-    flex: 2 1 auto;
-  }
-  .config-savebar-btn.primary:hover { background: rgba(34, 211, 238, 0.24); }
-  .config-savebar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .config-savebar-btn:disabled:hover {
-    background: var(--surface2);
-    border-color: var(--border);
-    color: var(--text-muted);
-  }
-  .config-savebar-btn.primary:disabled:hover {
-    background: rgba(34, 211, 238, 0.14);
-    border-color: rgba(34, 211, 238, 0.5);
-    color: var(--accent);
-  }
-  /* Success flash after a save / update. */
-  .config-savebar-btn.flash-success,
-  .config-savebar-btn.primary.flash-success {
-    background: rgba(52, 211, 153, 0.22);
-    border-color: rgba(52, 211, 153, 0.75);
-    color: var(--green);
-  }
-  .saved-config-pill.flash-success {
-    background: rgba(52, 211, 153, 0.14);
-    border-color: rgba(52, 211, 153, 0.75);
-    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.45);
-  }
-
   /* Strategy details side panel — slides in from the left when a chip's
      more-button is clicked. */
   .strategy-panel {
     position: fixed;
     inset: 0;
     z-index: 150;
-    /* Always pass-through at the container level. Only the actual sidebar
-       content (.strategy-panel-content) opts back in to pointer events, so
-       the rest of the page — chart, legend chips, parameter sliders — stays
-       fully interactive while the sidebar is open. */
     pointer-events: none;
     visibility: hidden;
   }
   .strategy-panel.is-open {
     visibility: visible;
+    pointer-events: auto;
   }
   .strategy-panel-backdrop {
     position: absolute;
     inset: 0;
-    /* Stays light so the user can still see the chart respond to the
-       controls in the open sidebar. Pointer-events:none ensures clicks
-       fall through to whatever is underneath (chart, controls). */
-    background: rgba(2, 6, 18, 0.12);
+    background: rgba(2, 6, 18, 0.45);
     opacity: 0;
-    pointer-events: none;
     transition: opacity 0.2s;
   }
   .strategy-panel.is-open .strategy-panel-backdrop {
@@ -1951,45 +1205,9 @@
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     flex-direction: column;
-    /* Re-enable pointer events for the actual sidebar (parent passes through). */
-    pointer-events: auto;
     /* Children must respect the narrow width — without min-width:0 a wide
        <table> inside the body would stretch the flex column. */
     min-width: 0;
-  }
-  /* While actively dragging the resizer we drop the transform transition so
-     the panel tracks the cursor with no easing lag. */
-  .strategy-panel-content.is-resizing {
-    transition: none;
-    user-select: none;
-  }
-  /* Drag handle pinned to the panel's right edge — like a split-pane divider.
-     Sits half-outside the border so it's easy to grab; cursor + accent line
-     on hover/drag signal it's draggable. */
-  .strategy-panel-resizer {
-    position: absolute;
-    top: 0;
-    right: -3px;
-    width: 8px;
-    height: 100%;
-    cursor: ew-resize;
-    z-index: 5;
-    /* The visible 1px accent line is drawn with a pseudo so the hit area can
-       stay a comfortable 8px wide without showing an 8px bar. */
-  }
-  .strategy-panel-resizer::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: 3px;
-    width: 2px;
-    height: 100%;
-    background: transparent;
-    transition: background 0.15s;
-  }
-  .strategy-panel-resizer:hover::after,
-  .strategy-panel-content.is-resizing .strategy-panel-resizer::after {
-    background: var(--accent);
   }
   .strategy-panel.is-open .strategy-panel-content {
     transform: translateX(0);
@@ -2002,16 +1220,6 @@
     align-items: center;
     flex-shrink: 0;
   }
-  /* Title row: the editable name + a pencil affordance so it's obviously
-     editable, with the close button pushed to the far right by the header's
-     space-between. */
-  .strategy-panel-title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
   .strategy-panel-header h3 {
     font-size: 14px;
     font-weight: 600;
@@ -2019,50 +1227,6 @@
     letter-spacing: 1px;
     color: var(--text);
     margin: 0;
-  }
-  /* The title doubles as the editable strategy name. A dashed underline at rest
-     signals it's editable; the pencil icon reinforces it. */
-  .strategy-panel-header h3[contenteditable] {
-    cursor: text;
-    padding: 3px 7px;
-    margin: -3px 0 -3px -7px;
-    border-radius: 5px;
-    outline: none;
-    transition: background 0.15s, box-shadow 0.15s;
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    text-decoration: underline dashed rgba(148, 163, 184, 0.55);
-    text-underline-offset: 4px;
-  }
-  .strategy-panel-header h3[contenteditable]:hover {
-    background: rgba(148, 163, 184, 0.10);
-  }
-  .strategy-panel-header h3[contenteditable]:focus {
-    background: var(--surface2);
-    box-shadow: inset 0 0 0 1px var(--accent);
-    text-transform: none;
-    letter-spacing: 0.3px;
-    text-decoration: none;
-  }
-  .strategy-panel-title-edit {
-    flex-shrink: 0;
-    width: 24px;
-    height: 24px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 5px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s;
-  }
-  .strategy-panel-title-edit:hover {
-    background: rgba(34, 211, 238, 0.18);
-    color: var(--accent);
   }
   .strategy-panel-close {
     width: 28px;
@@ -2120,16 +1284,6 @@
     flex-wrap: wrap;
     gap: 6px;
   }
-  /* When the what-if-controls block is injected into the panel just below
-     the 9sig-controls block, separate them with a visible divider so the
-     experiments read as their own section rather than more strategy knobs.
-     Border lives on the what-if side so it only shows when both blocks are
-     present. */
-  .strategy-panel-body #what-if-controls {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-  }
   /* 4-stat grid (CAGR / Start / End / Max DD) shown for the main strategy.
      2×2 layout because the panel is narrow — fits dollar values comfortably. */
   .strategy-stats {
@@ -2176,9 +1330,6 @@
     margin-top: 8px;
     max-height: 360px;
     overflow: auto;
-    /* Sticky descendants stick relative to this scroll container — give it
-       an explicit positioning context so browsers don't bail out. */
-    position: relative;
     border: 1px solid var(--border);
     border-radius: 6px;
     /* Pin to the panel's content width — the wide table scrolls horizontally
@@ -2188,91 +1339,13 @@
   }
   .strategy-panel-body .quarter-table-wrap table {
     width: 100%;
-    /* `separate` (not `collapse`) so position:sticky on the <th> actually
-       sticks — `collapse` breaks sticky table cells in Chrome/Safari. */
-    border-collapse: separate !important;
-    border-spacing: 0;
+    border-collapse: collapse;
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
   }
-  /* Belt + suspenders: make BOTH thead and each th sticky, and override the
-     global `table thead { position: sticky }` z-index so a row's cells can't
-     scroll over the header. */
-  .strategy-panel-body .quarter-table-wrap thead {
-    position: sticky;
-    top: 0;
-    z-index: 3;
-  }
-  .strategy-panel-body .quarter-table-wrap thead tr {
-    position: sticky;
-    top: 0;
-    z-index: 3;
-  }
-  /* Inline info marker. Hover/focus reveals a custom CSS tooltip read from
-     the `data-tip` attribute — appears instantly (no 1-2s native delay)
-     and styled to match the rest of the UI. */
-  .info-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 11px;
-    height: 11px;
-    margin: 0 3px;
-    border-radius: 50%;
-    background: rgba(34,211,238,0.12);
-    color: var(--accent);
-    font-size: 8px;
-    line-height: 1;
-    font-style: normal;
-    font-weight: 600;
-    cursor: help;
-    user-select: none;
-    vertical-align: middle;
-    position: relative;
-    transition: background 0.15s, color 0.15s;
-  }
-  .info-icon:hover,
-  .info-icon:focus {
-    background: var(--accent);
-    color: var(--bg);
-    outline: none;
-  }
-  /* Custom tooltip — uses ::after instead of native title for instant show,
-     wraps long text. position:fixed (with JS-set --tip-left/--tip-top from
-     the icon's getBoundingClientRect) so it escapes the strategy-panel-body's
-     overflow:auto clipping — otherwise tooltips near the body's top edge
-     render behind the panel header. */
-  .info-icon[data-tip]:hover::after,
-  .info-icon[data-tip]:focus::after {
-    content: attr(data-tip);
-    position: fixed;
-    left: var(--tip-left, 50%);
-    top: var(--tip-top, 0);
-    transform: translate(-50%, -100%);
-    background: var(--surface2);
-    color: var(--text);
-    padding: 6px 10px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    font-size: 11px;
-    font-weight: 400;
-    font-style: normal;
-    line-height: 1.4;
-    text-transform: none;
-    letter-spacing: 0;
-    white-space: normal;
-    width: max-content;
-    max-width: 240px;
-    z-index: 10000;
-    pointer-events: none;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  }
-
   .strategy-panel-body .quarter-table-wrap th {
     position: sticky;
     top: 0;
-    /* Sit above body rows so they scroll *under* the header. */
-    z-index: 2;
     background: var(--surface2);
     color: var(--text-muted);
     font-weight: 600;
@@ -2281,23 +1354,10 @@
     letter-spacing: 0.4px;
     text-align: right;
     padding: 6px 8px;
-    /* `border-collapse: collapse` strips borders from sticky cells, so the
-       bottom edge has to come from an inset box-shadow that travels with
-       the sticky-positioned th instead of the table grid. */
-    box-shadow: inset 0 -1px 0 var(--border);
+    border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
-  .strategy-panel-body .quarter-table-wrap th:first-child {
-    text-align: left;
-    /* Freeze the date column when scrolling horizontally. `left:0` sticks
-       it to the wrap's left edge; z-index 4 keeps the corner cell above
-       both the regular sticky header row (z 3) and the regular sticky
-       data column (z 1) so it always wins the stacking war. The right
-       inset-shadow gives a subtle separator from the scrolling columns. */
-    left: 0;
-    z-index: 4;
-    box-shadow: inset 0 -1px 0 var(--border), inset -1px 0 0 var(--border);
-  }
+  .strategy-panel-body .quarter-table-wrap th:first-child { text-align: left; }
   .strategy-panel-body .quarter-table-wrap td {
     padding: 4px 8px;
     text-align: right;
@@ -2305,39 +1365,10 @@
     border-bottom: 1px solid rgba(30, 42, 63, 0.4);
     white-space: nowrap;
   }
-  .strategy-panel-body .quarter-table-wrap td:first-child {
-    text-align: left;
-    color: var(--text-muted);
-    /* Freeze the date column for horizontal scroll. Needs an opaque
-       background (cells underneath would otherwise bleed through when this
-       column overlaps them) and a positive z-index to sit on top of the
-       regular scrolling cells. */
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    background: var(--surface);
-    box-shadow: inset -1px 0 0 var(--border);
-  }
-  /* Last (current-period) row: not yet closed — subtly tinted, with an ⓘ
-     tooltip explaining it's a same-day snapshot that refreshes daily. */
-  .strategy-panel-body .quarter-table-wrap tr.log-latest td {
-    background: rgba(251, 191, 36, 0.07);
-    font-style: italic;
-  }
+  .strategy-panel-body .quarter-table-wrap td:first-child { text-align: left; color: var(--text-muted); }
   .strategy-panel-body .quarter-table-wrap td.action-sell { color: var(--red); }
   .strategy-panel-body .quarter-table-wrap td.action-buy  { color: var(--green); }
   .strategy-panel-body .quarter-table-wrap td.action-hold { color: var(--text-muted); }
-  /* Action column reads as a short verb ("SELL $X" / "BUY $Y" / "HOLD") —
-     shrink the font + tighten padding so it takes roughly half the space
-     of a numeric column. Long-form annotations like "(30d 1/2)" or
-     "(spike)" still fit on one line thanks to the smaller cap. */
-  .strategy-panel-body .quarter-table-wrap th.log-action,
-  .strategy-panel-body .quarter-table-wrap td.log-action {
-    font-size: 9px;
-    padding-left: 4px;
-    padding-right: 4px;
-    letter-spacing: 0.2px;
-  }
 
   .chart-container {
     position: relative;
@@ -2370,11 +1401,11 @@
   #custom-tooltip {
     display: none;
     position: absolute;
-    /* The tooltip follows the cursor, so it MUST ignore pointer events — if it
-       caught them, the cursor landing on it would fire mouseleave on the canvas
-       (hiding the tooltip), then re-enter the canvas (showing it again), in a
-       flicker loop. The close × re-enables pointer events on itself for touch. */
-    pointer-events: none;
+    /* Pointer events on so the close × button is clickable. On desktop the
+       tooltip ignores its own pointer events for hover purposes (Chart.js
+       hover is driven by canvas events, not tooltip ones) so allowing
+       pointer events here doesn't interfere with hover behavior. */
+    pointer-events: auto;
     background: #141c2b;
     border: 1px solid #2a3550;
     border-radius: 10px;
@@ -2399,8 +1430,6 @@
     font-size: 16px;
     line-height: 1;
     cursor: pointer;
-    /* Re-enable pointer events (parent is none) so touch users can dismiss. */
-    pointer-events: auto;
     display: none;
     align-items: center;
     justify-content: center;
@@ -2586,41 +1615,6 @@
     background: var(--accent);
     color: var(--bg);
     border-color: var(--accent);
-  }
-
-  /* Shown only when localStorage was written by an older APP_VERSION. Pinned
-     to the left edge of the header so it doesn't crowd the share button on
-     the right. Amber/orange to read as "heads up" not "error". The explicit
-     `[hidden]` rule is required because `display: inline-flex` below would
-     otherwise override the HTML `hidden` attribute's default `display:none`. */
-  #reset-version-btn[hidden] { display: none; }
-  #reset-version-btn {
-    position: absolute;
-    top: 0;
-    left: 0;
-    display: inline-flex;
-    align-items: center;
-    height: 34px;
-    padding: 0 12px;
-    background: rgba(251, 146, 60, 0.12);
-    border: 1px solid #fb923c;
-    border-radius: 8px;
-    color: #fb923c;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: all 0.2s;
-  }
-  #reset-version-btn:hover {
-    background: #fb923c;
-    color: var(--bg);
-  }
-  @media (max-width: 900px) {
-    #reset-version-btn {
-      font-size: 11px;
-      padding: 0 8px;
-    }
   }
 
   #share-toast {

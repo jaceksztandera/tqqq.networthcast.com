@@ -2,9 +2,16 @@ name: Update market data
 
 on:
   schedule:
-    # 15:30 UTC on weekdays = 11:30 AM ET (EDT) / 10:30 AM ET (EST)
-    # Either way, at least 2 hours after the 9:30 AM ET market open.
+    # GitHub cron is fixed UTC (no daylight-saving), so each entry drifts an
+    # hour between EST and EDT — both times below stay safely inside their
+    # intended window either way.
+    #
+    # Morning run — early intraday snapshot, ~1-2h after the 9:30 AM ET open:
+    #   15:30 UTC = 10:30 AM ET (EST) / 11:30 AM ET (EDT)
     - cron: '30 15 * * 1-5'
+    # Evening run — captures the (near-)final close, ~1-2h after the 4:00 PM
+    #   ET close: 22:00 UTC = 5:00 PM ET (EST) / 6:00 PM ET (EDT)
+    - cron: '0 22 * * 1-5'
   workflow_dispatch: {}
 
 permissions:

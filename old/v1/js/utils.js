@@ -6,32 +6,15 @@ function qLabel(dateStr) {
   return q + ' ' + y;
 }
 
-// "YYYY-MM-DD" → "1 Oct 26" — short human date used in the rebalance log.
-// We add ONE calendar day before formatting so each row reads as the
-// period it kicks off (rebalances happen on the last trading day of one
-// period, "30 Sep 26" close, but they set up the next period — labeling
-// them "1 Oct 26" matches user intuition that Q4 starts in October, not
-// in late September). Works the same way for weekly/monthly/yearly: end
-// of one period → "first day of the next".
-const _LOG_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fmtLogDate(dateStr) {
-  if (!dateStr || dateStr.length < 10) return dateStr || '';
-  // UTC-anchored to avoid DST quirks shifting the day.
-  const dt = new Date(dateStr + 'T00:00:00Z');
-  if (Number.isNaN(dt.getTime())) return dateStr;
-  dt.setUTCDate(dt.getUTCDate() + 1);
-  const d = dt.getUTCDate();
-  const m = dt.getUTCMonth();
-  const y = String(dt.getUTCFullYear()).slice(2);
-  return `${d} ${_LOG_MONTHS[m]} ${y}`;
-}
-
-// Display name for the 9sig strategy. The canonical 9sig (quarterly, 9%
-// The 9sig strategy's display name is always the static label "9sig" — it no
-// longer changes to "sig" when the parameters are tweaked. (Names are not
-// derived from parameters anywhere; saved strategies are renameable instead.)
+// Display name for the 9sig strategy — derived from the current signal-line
+// growth selector (e.g. "9sig", "15sig"). Used by chart labels, analytics
+// buttons, log-table headers, and adaptive-transition badges so a user who
+// picks 15% quarterly growth sees the strategy named "15sig" throughout.
+// The internal key stays '9sig' so URL params and saved state are stable.
 function nineSigName() {
-  return '9sig';
+  const v = (document.getElementById('select-9sig-growth') || {}).value;
+  const n = parseInt(v, 10);
+  return (Number.isFinite(n) ? n : 9) + 'sig';
 }
 
 // Logarithmic slider for initial investment: slider 0-1000 maps to $0-$100M

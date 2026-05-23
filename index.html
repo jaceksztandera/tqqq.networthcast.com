@@ -3,6 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Freeze pre-versioning ("v1") shared links. Those URLs predate the `v`
+     stamp and carry params that no longer exist in the current app (tu/td/tw =
+     the old Adaptive strategy, eo = envelope opacity). Redirect them to the
+     frozen v1 build at /old/v1/ so they keep resolving exactly as shared.
+     Runs synchronously in <head> before any app code loads, so there's no
+     flash of the new UI. -->
+<script>
+(function () {
+  try {
+    var p = new URLSearchParams(location.search);
+    if (!p.has('v') && (p.has('tu') || p.has('td') || p.has('tw') || p.has('eo'))) {
+      location.replace('old/v1/' + location.search + location.hash);
+    }
+  } catch (e) {}
+})();
+</script>
 <title>Strategies Simulator · Backtesting</title>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-XJ1P981CGQ"></script>
 <script>
@@ -26,12 +42,15 @@
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
     <span class="share-btn-label">Share current configuration</span>
   </button>
+  <button id="reset-version-btn" type="button" hidden onclick="resetStorageForNewVersion()" title="A newer version of the simulator is available. Click to clear saved settings and load defaults.">
+    new version — reset saved data
+  </button>
   <div id="share-toast">Link copied to clipboard</div>
 </div>
 
 <div class="layout">
   <div class="panel">
-    <h2>Parameters</h2>
+    <h2>Investment</h2>
 
     <div class="control-group">
       <label>Initial Investment</label>
@@ -40,31 +59,37 @@
     </div>
 
     <div class="control-group">
-      <label>Monthly Contribution</label>
-      <div class="value-display" id="disp-monthly">$500</div>
+      <div class="mc-head">
+        <label>Monthly Contribution</label>
+        <span class="value-display" id="disp-monthly">$500</span>
+      </div>
+      <label class="mc-raise" for="slider-raise" title="Grow the monthly contribution by this much each year">
+        increase <select id="slider-raise" class="inline-select raise-select">
+          <option value="0" selected>0%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+          <option value="3">3%</option>
+          <option value="4">4%</option>
+          <option value="5">5%</option>
+          <option value="6">6%</option>
+          <option value="7">7%</option>
+          <option value="8">8%</option>
+          <option value="9">9%</option>
+          <option value="10">10%</option>
+          <option value="12">12%</option>
+          <option value="15">15%</option>
+          <option value="20">20%</option>
+          <option value="25">25%</option>
+        </select> /yr
+      </label>
       <input type="range" id="slider-monthly" min="0" max="100000" step="50" value="500">
     </div>
 
-    <div class="section-toggle-row">
-      <button id="advanced-toggle" onclick="toggleAdvanced()">+ advanced</button>
-    </div>
-
-    <div id="advanced-section">
-      <div class="control-group">
-        <label>Monthly Contribution Annual Increase</label>
-        <div class="value-display" id="disp-raise">3%</div>
-        <input type="range" id="slider-raise" min="0" max="20" step="0.5" value="3">
-      </div>
-
-      <div class="control-group">
-        <label>Cash Interest Rate (Annual)</label>
-        <div class="value-display" id="disp-rate">4.0%</div>
-        <!-- 0–1000 slider position, mapped through sliderToRate() to a 0–100% rate
-             with a quadratic curve (fine resolution near 0, big steps near 100). -->
-        <input type="range" id="slider-rate" min="0" max="1000" step="1" value="200">
-      </div>
-
-    </div>
+    <!-- Build a strategy from pasted (e.g. LLM-written) code. -->
+    <button id="new-custom-strategy" type="button" class="new-custom-btn">+ Custom strategy</button>
+    <!-- Saved strategies (saved-configs.js) — every type, incl. custom. Hidden
+         until the user has at least one. Each pill = an independent line. -->
+    <div id="saved-configs" hidden></div>
   </div>
 
   <div class="right-col">
@@ -123,34 +148,13 @@
               </button>
             </div>
             <h3 id="analytics-chart-title" hidden></h3>
-            <div class="analytics-strategy-options" id="analytics-strategy-options">
-              <button type="button" data-strat="adaptive" class="active">Adaptive (WIP)</button>
-              <button type="button" data-strat="9sig">9sig</button>
-              <button type="button" data-strat="bh-tqqq">B&amp;H TQQQ</button>
-              <button type="button" data-strat="bh-qqq5">B&amp;H QQQ5</button>
-              <button type="button" data-strat="bh-soxl">B&amp;H SOXL</button>
-              <button type="button" data-strat="sma">SMA</button>
-              <button type="button" data-strat="bh-qqq">B&amp;H QQQ</button>
-              <button type="button" data-strat="bh-spy">B&amp;H SPY</button>
-            </div>
-            <div class="analytics-baseline-wrap">
-              <span class="analytics-baseline-label">
-                <span>color by vs</span>
-                <span>performance of</span>
-              </span>
-              <select id="analytics-baseline" class="analytics-baseline-select" title="Color baseline">
-                <option value="compounded" selected>Compounded Cash</option>
-                <option value="bh-spy">B&amp;H SPY</option>
-                <option value="bh-qqq">B&amp;H QQQ</option>
-                <option value="adaptive">Adaptive (WIP)</option>
-                <option value="9sig">9sig</option>
-                <option value="bh-tqqq">B&amp;H TQQQ</option>
-                <option value="bh-qqq5">B&amp;H QQQ5</option>
-                <option value="bh-soxl">B&amp;H SOXL</option>
-                <option value="sma">SMA</option>
-                <option value="custom">Custom Target ($)</option>
-                <option value="custom-pct">Custom Growth (% per year)</option>
-              </select>
+            <!-- Heatmap controls read as a sentence (same inline-dropdown convention
+                 as the sidebar). Both selects are populated by refreshAnalyticsPickers(). -->
+            <div class="analytics-sentence" id="analytics-sentence">
+              <span class="as-text">Visualize</span>
+              <select id="analytics-strategy" class="analytics-strat-select" title="Strategy to visualize"></select>
+              <span class="as-text">in heatmap, colored by it vs performance of</span>
+              <select id="analytics-baseline" class="analytics-baseline-select" title="Comparison"></select>
               <input type="text" id="analytics-baseline-custom-input" class="analytics-baseline-custom" placeholder="$1M" hidden>
               <input type="range" id="analytics-baseline-pct-input" class="analytics-baseline-pct-slider" min="-100" max="100" step="1" value="20" hidden>
               <span id="analytics-baseline-pct-display" class="analytics-baseline-pct-display" hidden>+20%</span>
@@ -160,7 +164,6 @@
             </div>
           </div>
           <div class="analytics-metrics" id="analytics-metrics"></div>
-          <div class="analytics-chart-sub">rows: year you started investing &nbsp;·&nbsp; columns: N years later &nbsp;·&nbsp; cell color: log of value ÷ invested-compounded baseline (1× = break-even, anchored at slate midpoint)</div>
           <div class="analytics-progress" id="analytics-progress" hidden>
             <div class="analytics-progress-track"><div class="analytics-progress-bar" id="analytics-progress-bar"></div></div>
             <span id="analytics-progress-text">0 / 0</span>
@@ -177,98 +180,398 @@
   <div class="strategy-panel-backdrop"></div>
   <div class="strategy-panel-content">
     <div class="strategy-panel-header">
-      <h3 id="strategy-panel-title">Strategy</h3>
+      <div class="strategy-panel-title-wrap">
+        <h3 id="strategy-panel-title" contenteditable="true" spellcheck="false" title="Click to edit the name">Strategy</h3>
+        <button type="button" id="strategy-panel-title-edit" class="strategy-panel-title-edit" aria-label="Rename" title="Click to edit the name" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+      </div>
       <button type="button" class="strategy-panel-close" aria-label="Close">×</button>
     </div>
     <div class="strategy-panel-body" id="strategy-panel-body">
     </div>
+    <div class="strategy-panel-resizer" id="strategy-panel-resizer" title="Drag to resize"></div>
   </div>
 </aside>
 
 <div id="9sig-controls-host" hidden>
   <div class="control-group" id="9sig-controls">
     <div class="adaptive-line">
-      Trade
+      Divide entry amount into
+      <select class="inline-select" id="select-9sig-cash">
+        <option value="0">0%</option>
+        <option value="10">10%</option>
+        <option value="20">20%</option>
+        <option value="30">30%</option>
+        <option value="40" selected>40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+      </select>
+      cash and use remaining <span id="9sig-stock-pct">60%</span> to buy
       <select class="inline-select" id="select-9sig-underlying">
         <option value="tqqq" selected>TQQQ</option>
         <option value="qqq5">QQQ5</option>
-        <option value="soxl">SOXL</option>
+      </select>.
+    </div>
+
+    <div class="adaptive-line">
+      That parked cash earns
+      <select class="inline-select" id="select-9sig-cashrate">
+        <option value="0">0.0%</option>
+        <option value="0.5">0.5%</option>
+        <option value="1">1.0%</option>
+        <option value="1.5">1.5%</option>
+        <option value="2">2.0%</option>
+        <option value="2.5">2.5%</option>
+        <option value="3">3.0%</option>
+        <option value="3.5">3.5%</option>
+        <option value="4" selected>4.0%</option>
+        <option value="4.5">4.5%</option>
+        <option value="5">5.0%</option>
+        <option value="5.5">5.5%</option>
+        <option value="6">6.0%</option>
+        <option value="6.5">6.5%</option>
+        <option value="7">7.0%</option>
+        <option value="7.5">7.5%</option>
+        <option value="8">8.0%</option>
+        <option value="8.5">8.5%</option>
+        <option value="9">9.0%</option>
+        <option value="9.5">9.5%</option>
+        <option value="10">10.0%</option>
+        <option value="10.5">10.5%</option>
+        <option value="11">11.0%</option>
+        <option value="11.5">11.5%</option>
+        <option value="12">12.0%</option>
+        <option value="12.5">12.5%</option>
+        <option value="13">13.0%</option>
+        <option value="14">14.0%</option>
+        <option value="15">15.0%</option>
+        <option value="16">16.0%</option>
+        <option value="18">18.0%</option>
+        <option value="20">20.0%</option>
       </select>
+      a year.
+      <span class="info-icon" tabindex="0" data-tip="Annual interest the 9sig strategy's idle cash earns while it waits to be deployed at the next rebalance. Independent of the SMA and Invested Compounded rates.">ⓘ</span>
+    </div>
+
+    <div class="adaptive-line">
+      Rebalance
+      <select class="inline-select" id="select-9sig-period">
+        <option value="weekly">weekly</option>
+        <option value="monthly">monthly</option>
+        <option value="quarterly" selected>quarterly</option>
+        <option value="yearly">yearly</option>
+      </select>
+      <span class="info-icon" tabindex="0" data-tip="How often you sit down and rebalance. The classical 9sig is quarterly with a 9% per-quarter target, so the growth rate next to this is read as 'per chosen period' — quarterly + 9% means the signal line grows 9% every quarter.">ⓘ</span>
       and grow the signal line by
       <select class="inline-select" id="select-9sig-growth">
+        <option value="0.5">0.5%</option>
+        <option value="0.6">0.6%</option>
+        <option value="0.7">0.7%</option>
+        <option value="0.8">0.8%</option>
+        <option value="0.9">0.9%</option>
+        <option value="1">1%</option>
+        <option value="2">2%</option>
+        <option value="3">3%</option>
+        <option value="4">4%</option>
+        <option value="5">5%</option>
         <option value="6">6%</option>
         <option value="7">7%</option>
         <option value="8">8%</option>
         <option value="9" selected>9%</option>
         <option value="10">10%</option>
+        <option value="11">11%</option>
         <option value="12">12%</option>
+        <option value="13">13%</option>
+        <option value="14">14%</option>
         <option value="15">15%</option>
+        <option value="16">16%</option>
+        <option value="17">17%</option>
         <option value="18">18%</option>
+        <option value="19">19%</option>
+        <option value="20">20%</option>
+        <option value="21">21%</option>
+        <option value="22">22%</option>
+        <option value="23">23%</option>
+        <option value="24">24%</option>
+        <option value="25">25%</option>
+        <option value="26">26%</option>
+        <option value="27">27%</option>
+        <option value="28">28%</option>
+        <option value="29">29%</option>
+        <option value="30">30%</option>
+        <option value="31">31%</option>
+        <option value="32">32%</option>
+        <option value="33">33%</option>
+        <option value="34">34%</option>
+        <option value="35">35%</option>
+        <option value="36">36%</option>
+        <option value="37">37%</option>
+        <option value="38">38%</option>
+        <option value="39">39%</option>
+        <option value="40">40%</option>
+        <option value="41">41%</option>
+        <option value="42">42%</option>
+        <option value="43">43%</option>
+        <option value="44">44%</option>
+        <option value="45">45%</option>
+        <option value="46">46%</option>
+        <option value="47">47%</option>
+        <option value="48">48%</option>
+        <option value="49">49%</option>
+        <option value="50">50%</option>
+        <option value="51">51%</option>
+        <option value="52">52%</option>
+        <option value="53">53%</option>
+        <option value="54">54%</option>
+        <option value="55">55%</option>
+        <option value="56">56%</option>
+        <option value="57">57%</option>
+        <option value="58">58%</option>
+        <option value="59">59%</option>
+        <option value="60">60%</option>
+        <option value="61">61%</option>
+        <option value="62">62%</option>
+        <option value="63">63%</option>
+        <option value="64">64%</option>
+        <option value="65">65%</option>
+        <option value="66">66%</option>
+        <option value="67">67%</option>
+        <option value="68">68%</option>
+        <option value="69">69%</option>
+        <option value="70">70%</option>
+        <option value="71">71%</option>
+        <option value="72">72%</option>
+        <option value="73">73%</option>
+        <option value="74">74%</option>
+        <option value="75">75%</option>
+        <option value="76">76%</option>
+        <option value="77">77%</option>
+        <option value="78">78%</option>
+        <option value="79">79%</option>
+        <option value="80">80%</option>
+        <option value="81">81%</option>
+        <option value="82">82%</option>
+        <option value="83">83%</option>
+        <option value="84">84%</option>
+        <option value="85">85%</option>
+        <option value="86">86%</option>
+        <option value="87">87%</option>
+        <option value="88">88%</option>
+        <option value="89">89%</option>
+        <option value="90">90%</option>
+        <option value="91">91%</option>
+        <option value="92">92%</option>
+        <option value="93">93%</option>
+        <option value="94">94%</option>
+        <option value="95">95%</option>
+        <option value="96">96%</option>
+        <option value="97">97%</option>
+        <option value="98">98%</option>
+        <option value="99">99%</option>
+        <option value="100">100%</option>
+        <option value="101">101%</option>
+        <option value="102">102%</option>
+        <option value="103">103%</option>
+        <option value="104">104%</option>
+        <option value="105">105%</option>
+        <option value="106">106%</option>
+        <option value="107">107%</option>
+        <option value="108">108%</option>
+        <option value="109">109%</option>
+        <option value="110">110%</option>
+        <option value="111">111%</option>
+        <option value="112">112%</option>
+        <option value="113">113%</option>
+        <option value="114">114%</option>
+        <option value="115">115%</option>
+        <option value="116">116%</option>
+        <option value="117">117%</option>
+        <option value="118">118%</option>
+        <option value="119">119%</option>
+        <option value="120">120%</option>
+        <option value="121">121%</option>
+        <option value="122">122%</option>
+        <option value="123">123%</option>
+        <option value="124">124%</option>
+        <option value="125">125%</option>
+        <option value="126">126%</option>
+        <option value="127">127%</option>
+        <option value="128">128%</option>
+        <option value="129">129%</option>
+        <option value="130">130%</option>
+        <option value="131">131%</option>
+        <option value="132">132%</option>
+        <option value="133">133%</option>
+        <option value="134">134%</option>
+        <option value="135">135%</option>
+        <option value="136">136%</option>
+        <option value="137">137%</option>
+        <option value="138">138%</option>
+        <option value="139">139%</option>
+        <option value="140">140%</option>
+        <option value="141">141%</option>
+        <option value="142">142%</option>
+        <option value="143">143%</option>
+        <option value="144">144%</option>
+        <option value="145">145%</option>
+        <option value="146">146%</option>
+        <option value="147">147%</option>
+        <option value="148">148%</option>
+        <option value="149">149%</option>
+        <option value="150">150%</option>
+      </select>.
+      <span class="info-icon" tabindex="0" data-tip="A 9% signal-line growth per quarter is the canonical setting for 3× ETFs — bump it up for 5× (QQQ5).">ⓘ</span>
+    </div>
+    <div class="adaptive-line">
+      In a crash, hold instead of selling once the stock has fallen
+      <select class="inline-select" id="select-9sig-crashdrop">
+        <option value="5">5%</option>
+        <option value="10">10%</option>
+        <option value="15">15%</option>
         <option value="20">20%</option>
         <option value="25">25%</option>
-      </select> per quarter
-    </div>
-    <div class="adaptive-line">
-      30-down no-sell when stock drops
-      <select class="inline-select" id="select-9sig-crashdrop">
         <option value="30" selected>30%</option>
+        <option value="35">35%</option>
+        <option value="40">40%</option>
+        <option value="45">45%</option>
+        <option value="50">50%</option>
+        <option value="55">55%</option>
         <option value="60">60%</option>
+        <option value="65">65%</option>
+        <option value="70">70%</option>
+        <option value="75">75%</option>
+        <option value="80">80%</option>
+        <option value="85">85%</option>
         <option value="90">90%</option>
+        <option value="95">95%</option>
+        <option value="100">100% (off)</option>
+        <option value="110">110% (off)</option>
         <option value="120">120% (off)</option>
+        <option value="130">130% (off)</option>
+        <option value="140">140% (off)</option>
         <option value="150">150% (off)</option>
         <option value="180">180% (off)</option>
-      </select> below 2-year high
+      </select>
+      below its past
+      <select class="inline-select" id="select-9sig-crashwin">
+        <option value="3">1 quarter</option>
+        <option value="6">2 quarters</option>
+        <option value="9">3 quarters</option>
+        <option value="12">4 quarters</option>
+        <option value="15">5 quarters</option>
+        <option value="18">6 quarters</option>
+        <option value="21">7 quarters</option>
+        <option value="24" selected>2 years</option>
+        <option value="36">3 years</option>
+        <option value="48">4 years</option>
+        <option value="60">5 years</option>
+      </select>
+      high.
+      <span class="info-icon" tabindex="0" data-tip="When the stock has tanked this far below its recent peak, skip the usual sell for up to two quarters in a row (canonical 9sig is quarterly) so you don't dump at the bottom. The lookback window controls how far back 'recent peak' looks — canonical 9sig uses 2 years.">ⓘ</span>
     </div>
     <div class="adaptive-line">
-      Spike-reset to 60% when quarter gain hits
+      After a big rally, take profits back down to <span id="9sig-spike-target">60%</span> stock once gains hit
       <select class="inline-select" id="select-9sig-spike">
         <option value="0">off</option>
+        <option value="25">25%</option>
         <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
         <option value="75">75%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
         <option value="100" selected>100%</option>
+        <option value="110">110%</option>
+        <option value="120">120%</option>
+        <option value="130">130%</option>
+        <option value="140">140%</option>
         <option value="150">150%</option>
+        <option value="160">160%</option>
+        <option value="170">170%</option>
+        <option value="180">180%</option>
+        <option value="190">190%</option>
         <option value="200">200%</option>
+        <option value="225">225%</option>
+        <option value="250">250%</option>
+        <option value="275">275%</option>
         <option value="300">300%</option>
+        <option value="350">350%</option>
         <option value="400">400%</option>
+        <option value="500">500%</option>
       </select>
+      in one period.
+      <span class="info-icon" tabindex="0" data-tip="If the stock rips this much in a single quarter (canonical 9sig is quarterly), force a hard rebalance back to your starting stock weight so a parabolic move doesn't leave you over-exposed. Set to off to let winners keep running.">ⓘ</span>
     </div>
-    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4">
-      Signal line: 9%/q canonical for 3×; raise for 5× (QQQ5). 30-down: skip
-      selling for up to 2 consecutive quarters when stock is N% below its
-      2-yr high — values past 100% effectively disable the rule. Spike-reset:
-      hard-rebalance to 60% stock when the underlying gains N% in a quarter.
+    <div class="adaptive-line">
+      A buy never spends more than
+      <select class="inline-select" id="select-9sig-buypower">
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="75">75%</option>
+        <option value="80">80%</option>
+        <option value="85">85%</option>
+        <option value="90" selected>90%</option>
+        <option value="95">95%</option>
+        <option value="100">100%</option>
+      </select>
+      of your cash.
+      <span class="info-icon" tabindex="0" data-tip="When the signal says buy, this caps how much of your cash goes in, so you always keep some dry powder. Canonical 9sig spends 90% (keeps 10%). Set to 100% to deploy all available cash on every buy.">ⓘ</span>
     </div>
   </div>
 </div>
 
-<div id="envelope-controls-host" hidden>
-  <div class="control-group" id="envelope-controls">
-    <label>What If You Rebalanced on a Different Day?</label>
+<div id="invested-controls-host" hidden>
+  <div class="control-group" id="invested-controls">
+    <div class="adaptive-line" style="margin-bottom:8px">
+      The annual interest every cash balance earns. It drives this Invested Compounded baseline (every contribution parked in interest-bearing cash, never bought into stock) and also the idle cash held by the 9sig and SMA strategies.
+    </div>
+    <label>Cash Interest Rate (Annual)</label>
+    <div class="value-display" id="disp-rate" style="font-size:14px">4.0%</div>
+    <!-- 0–1000 slider position, mapped through sliderToRate() to a 0–100% rate
+         with a quadratic curve (fine resolution near 0, big steps near 100). -->
+    <input type="range" id="slider-rate" min="0" max="1000" step="1" value="200">
+  </div>
+</div>
+
+<div id="what-if-controls-host" hidden>
+  <div class="control-group" id="what-if-controls">
+    <label>What If You Deployed Cash Right Away?</label>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:6px 0 8px;font-size:12px">
+      <input type="checkbox" id="select-9sig-deploy" style="cursor:pointer;accent-color:var(--accent)">
+      <span style="color:var(--text)">Deploy 50% of each contribution straight into stock</span>
+    </label>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4">
+      Only affects monthly contributions (not the initial amount). Canonical 9sig parks each contribution in cash until the next rebalance. Tick this to buy the underlying right away with half of every contribution at its month's price.
+    </div>
+
+    <label style="margin-top:18px;display:block">What If You Rebalanced on a Different Day?</label>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:6px 0 8px;font-size:12px">
       <input type="checkbox" id="toggle-envelope" style="cursor:pointer;accent-color:var(--accent)">
       <span style="color:var(--text)">Show alternate runs</span>
     </label>
-    <div class="value-display" id="disp-envelope-opacity" style="font-size:14px">opacity 0.10</div>
-    <input type="range" id="slider-envelope-opacity" min="1" max="50" step="1" value="10">
     <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4" id="envelope-note">
       Each ghost line is the same 9sig strategy with rebalance shifted to a different day — see how much the outcome depends on when you rebalance.
     </div>
   </div>
 </div>
 
-<div id="adaptive-controls-host" hidden>
-  <div class="control-group" id="adaptive-controls">
+<div id="bh-controls-host" hidden>
+  <div class="control-group" id="bh-controls">
     <div class="adaptive-line">
-      Switch to <strong>9sig</strong> when TQQQ is
-      <select class="inline-select" id="select-tqqq-above"></select>× as much as 9sig
-    </div>
-    <div class="adaptive-line">
-      Switch to <strong>all-in TQQQ</strong> when 9sig is
-      <select class="inline-select" id="select-tqqq-below"></select>× as much as TQQQ
-    </div>
-    <div class="adaptive-line">
-      measured over the last
-      <select class="inline-select" id="select-tqqq-window"></select> year period
+      Buy
+      <select class="inline-select" id="select-bh-underlying">
+        <option value="tqqq" selected>TQQQ</option>
+        <option value="qqq">QQQ</option>
+        <option value="spy">SPY</option>
+        <option value="qqq5">QQQ5</option>
+      </select>
+      at entry, add each monthly contribution to the position, never sell.
+      <span class="info-icon" tabindex="0" data-tip="Initial amount goes in at entry and every monthly contribution adds to the position. Nothing is ever sold.">ⓘ</span>
     </div>
   </div>
 </div>
@@ -276,13 +579,12 @@
 <div id="sma-controls-host" hidden>
   <div class="control-group" id="sma-controls">
     <div class="adaptive-line">
-      Hold
+      Buy
       <select class="inline-select" id="select-sma-underlying">
         <option value="tqqq" selected>TQQQ</option>
         <option value="qqq5">QQQ5</option>
-        <option value="soxl">SOXL</option>
       </select>
-      while
+      when
       <select class="inline-select" id="select-sma-asset">
         <option value="qqq" selected>QQQ</option>
         <option value="spy">SPY</option>
@@ -293,10 +595,148 @@
         <option value="150">150</option>
         <option value="200" selected>200</option>
         <option value="250">250</option>
-      </select>-day SMA
+      </select>-day average price.
     </div>
     <div class="adaptive-line">
-      otherwise move to <strong>cash</strong> (earning the configured rate).
+      Require at least
+      <select class="inline-select" id="select-sma-entry-buf">
+        <option value="0" selected>0%</option>
+        <option value="1">1%</option>
+        <option value="2">2%</option>
+        <option value="3">3%</option>
+        <option value="4">4%</option>
+        <option value="5">5%</option>
+      </select>
+      above the average to buy, and
+      <select class="inline-select" id="select-sma-exit-buf">
+        <option value="0" selected>0%</option>
+        <option value="1">1%</option>
+        <option value="2">2%</option>
+        <option value="3">3%</option>
+        <option value="4">4%</option>
+        <option value="5">5%</option>
+      </select>
+      below it to sell.
+    </div>
+    <div class="adaptive-line">
+      Also sell when RSI(10)<span class="info-icon" tabindex="0" data-tip="RSI is a 0–100 gauge of how stretched recent price moves are. Above 70 the market is running hot and tends to pull back; under 30 it's beat-up and tends to bounce. The (10) just means it's measured over the last 10 trading days.">ⓘ</span> is above
+      <select class="inline-select" id="select-sma-rsi-oh">
+        <option value="0" selected>off</option>
+        <option value="60">60</option>
+        <option value="70">70</option>
+        <option value="80">80</option>
+        <option value="90">90</option>
+      </select>
+    </div>
+    <div class="adaptive-line">
+      Only buy after RSI(10) drops below
+      <select class="inline-select" id="select-sma-rsi-cool">
+        <option value="0" selected>off</option>
+        <option value="40">40</option>
+        <option value="50">50</option>
+        <option value="60">60</option>
+        <option value="70">70</option>
+      </select>
+      <span class="info-icon" tabindex="0" data-tip="When the SMA says it's time to buy, hold off until the price has cooled down a bit — wait for RSI to drop under this level first. Leave it off if you'd rather buy the moment the SMA flips.">ⓘ</span>
+    </div>
+    <div class="adaptive-line">
+      While out of the market, parked cash earns
+      <select class="inline-select" id="select-sma-cashrate">
+        <option value="0">0.0%</option>
+        <option value="0.5">0.5%</option>
+        <option value="1">1.0%</option>
+        <option value="1.5">1.5%</option>
+        <option value="2">2.0%</option>
+        <option value="2.5">2.5%</option>
+        <option value="3">3.0%</option>
+        <option value="3.5">3.5%</option>
+        <option value="4" selected>4.0%</option>
+        <option value="4.5">4.5%</option>
+        <option value="5">5.0%</option>
+        <option value="5.5">5.5%</option>
+        <option value="6">6.0%</option>
+        <option value="6.5">6.5%</option>
+        <option value="7">7.0%</option>
+        <option value="7.5">7.5%</option>
+        <option value="8">8.0%</option>
+        <option value="8.5">8.5%</option>
+        <option value="9">9.0%</option>
+        <option value="9.5">9.5%</option>
+        <option value="10">10.0%</option>
+        <option value="10.5">10.5%</option>
+        <option value="11">11.0%</option>
+        <option value="11.5">11.5%</option>
+        <option value="12">12.0%</option>
+        <option value="12.5">12.5%</option>
+        <option value="13">13.0%</option>
+        <option value="14">14.0%</option>
+        <option value="15">15.0%</option>
+        <option value="16">16.0%</option>
+        <option value="18">18.0%</option>
+        <option value="20">20.0%</option>
+      </select>
+      a year.
+      <span class="info-icon" tabindex="0" data-tip="Annual interest the SMA strategy's cash earns while it sits out of the market. Independent of the 9sig and Invested Compounded rates.">ⓘ</span>
+    </div>
+
+    <div class="strategy-panel-section-label" style="margin-top:18px">Stage your buying (optional)</div>
+    <div style="font-size:11px;color:var(--text);line-height:1.5;margin-bottom:10px">
+      By default, the moment the SMA says "buy" you go 100% into TQQQ. This
+      section lets you split that buy across multiple steps — put some in
+      immediately, hold the rest in cash, then deploy more as TQQQ keeps
+      falling. <b>It only matters when the first selector is below 100%.</b>
+    </div>
+    <div class="adaptive-line">
+      On the SMA buy signal, put
+      <select class="inline-select" id="select-sma-dip-init">
+        <option value="25">25%</option>
+        <option value="50">50%</option>
+        <option value="75">75%</option>
+        <option value="100" selected>100%</option>
+      </select>
+      of your portfolio in TQQQ right away (the rest stays as cash).
+    </div>
+    <div class="adaptive-line">
+      Then if TQQQ falls
+      <select class="inline-select" id="select-sma-dip-r1-drop">
+        <option value="0" selected>off</option>
+        <option value="20">20%</option>
+        <option value="30">30%</option>
+        <option value="40">40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+      </select>
+      from its high, deploy
+      <select class="inline-select" id="select-sma-dip-r1-add">
+        <option value="0" selected>0%</option>
+        <option value="25">25%</option>
+        <option value="50">50%</option>
+        <option value="75">75%</option>
+        <option value="100">all</option>
+      </select>
+      of the remaining cash.
+    </div>
+    <div class="adaptive-line">
+      And if it falls
+      <select class="inline-select" id="select-sma-dip-r2-drop">
+        <option value="0" selected>off</option>
+        <option value="40">40%</option>
+        <option value="60">60%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+      </select>
+      from that high, deploy
+      <select class="inline-select" id="select-sma-dip-r2-add">
+        <option value="0" selected>0%</option>
+        <option value="25">25%</option>
+        <option value="50">50%</option>
+        <option value="75">75%</option>
+        <option value="100">all</option>
+      </select>
+      of what's still left.
+    </div>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.5">
+      "Since we bought" = the TQQQ peak we've seen during this in-the-market period. If the SMA flips to "sell" and later back to "buy", we start over with a fresh initial deploy and a fresh peak.
     </div>
   </div>
 </div>
@@ -304,9 +744,12 @@
 <script src="js/data.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/simulate.js"></script>
+<script src="js/metrics.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/controls.js"></script>
 <script src="js/analytics.js"></script>
+<script src="js/preview-dropdown.js"></script>
+<script src="js/saved-configs.js"></script>
 <script src="js/init.js"></script>
 
 </body>

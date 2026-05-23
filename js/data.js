@@ -27,11 +27,6 @@ async function loadSPYDaily() {
   return parseDataFile(await resp.text());
 }
 
-async function loadSOXLDaily() {
-  const resp = await fetch('data/synthetic-soxl.tsv?v=baked');
-  return parseDataFile(await resp.text());
-}
-
 async function loadQQQ5Daily() {
   const resp = await fetch('data/synthetic-qqq5.tsv?v=baked');
   return parseDataFile(await resp.text());
@@ -39,12 +34,12 @@ async function loadQQQ5Daily() {
 
 // Merge daily TSVs by date. The TQQQ TSV already contains synthesized pre-2010
 // rows (baked by update_data.py), so this is a straight join — no synthesis here.
-// SOXL data only starts 1994-05; pre-1994 rows get soxl: 0 and the simulate
-// loop skips contributions / valuation when that price is 0.
-function buildDaily(qqqDaily, tqqqDaily, spyDaily, soxlDaily, qqq5Daily) {
+// The fifth column (`_unused`) was SOXL before that strategy was removed; the
+// slot is kept so QQQ5 stays at column 5 throughout simulate/chart/analytics
+// without an index shift.
+function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily) {
   const tqqqMap = new Map(tqqqDaily.map(d => [d[0], d[1]]));
   const spyMap  = new Map(spyDaily.map(d => [d[0], d[1]]));
-  const soxlMap = new Map(soxlDaily.map(d => [d[0], d[1]]));
   const qqq5Map = qqq5Daily ? new Map(qqq5Daily.map(d => [d[0], d[1]])) : null;
   const result = [];
   for (const [date, qqqPrice] of qqqDaily) {
@@ -55,7 +50,7 @@ function buildDaily(qqqDaily, tqqqDaily, spyDaily, soxlDaily, qqq5Daily) {
         qqq:  qqqPrice,
         tqqq: tqqqPrice,
         spy:  spyMap.get(date) || 0,
-        soxl: soxlMap.get(date) || 0,
+        _unused: 0,
         qqq5: qqq5Map ? (qqq5Map.get(date) || 0) : 0,
       });
     }
@@ -85,7 +80,34 @@ function getMonth(dateStr) {
   return dateStr.substring(0, 7);
 }
 
+function getYear(dateStr) {
+  return dateStr.substring(0, 4);
+}
+
+// ISO week key for a YYYY-MM-DD date string. Used to bucket daily entries
+// into trading-week groups so weekly rebalancing has stable period boundaries.
+function getWeek(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  // Adjust to nearest Thursday (ISO week algorithm) then read year+week.
+  const day = (d.getUTCDay() + 6) % 7;          // Mon=0 ... Sun=6
+  d.setUTCDate(d.getUTCDate() - day + 3);
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const diff = (d - firstThursday) / 86400000;
+  const week = 1 + Math.round((diff - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return d.getUTCFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+// Period-name → trading days per period. Used both for envelope-shift sizing
+// (how many "rebalance-day-of-period" variants to render) and for the simulate
+// loop's per-period growth-rate scaling.
+const PERIOD_DAYS = { weekly: 5, monthly: 21, quarterly: 63, yearly: 252 };
+
 let quarterlyData, monthlyData; // populated by init()
+// Built on demand by precomputePeriodSeries() — same shape as quarterlyData
+// (one row per period, last trading-day price in that period).
+let weeklyData = null, yearlyData = null;
+let periodDataByName = null;     // { weekly, monthly, quarterly, yearly }
+let monthsInPeriodByName = null; // { period: [ [monthly indices], ... ] }
 let dailyDateToIdx; // populated by init()
 // monthlyByQuarter[qi] = indices into monthlyData whose date falls in
 // (quarterlyData[qi-1].date, quarterlyData[qi].date]. Replaces simulate()'s
@@ -94,6 +116,53 @@ let dailyDateToIdx; // populated by init()
 // data load. Only used when simulate runs against the default quarterlyData;
 // envelope-shifted runs fall back to the linear scan.
 let monthlyByQuarter = null;
+
+// Build periodData (one entry per period, last trading day in that period)
+// for the named period. Mirrors the existing monthlyData / quarterlyData
+// shape — same columns, same date format. Called once after `daily` loads.
+function buildPeriodData(periodFn) {
+  return lastOfPeriod(daily, periodFn).map(d => [d.date, d.tqqq, d.qqq, d.spy, d._unused, d.qqq5]);
+}
+
+// Build the months-in-period index for the given periodData. monthsInPeriod[i]
+// is the list of monthlyData indices whose date falls in
+// (periodData[i-1].date, periodData[i].date]. Same semantics as the existing
+// monthlyByQuarter cache — drives the contribution loop in simulate().
+function buildMonthsInPeriod(periodData) {
+  if (!periodData || !monthlyData) return null;
+  const out = new Array(periodData.length);
+  out[0] = [];
+  let mIdx = 0;
+  while (mIdx < monthlyData.length && monthlyData[mIdx][0] <= periodData[0][0]) mIdx++;
+  for (let pi = 1; pi < periodData.length; pi++) {
+    const cur = periodData[pi][0];
+    const list = [];
+    while (mIdx < monthlyData.length && monthlyData[mIdx][0] <= cur) {
+      list.push(mIdx);
+      mIdx++;
+    }
+    out[pi] = list;
+  }
+  return out;
+}
+
+function precomputePeriodSeries() {
+  if (!daily || !monthlyData) return;
+  weeklyData    = buildPeriodData(getWeek);
+  yearlyData    = buildPeriodData(getYear);
+  periodDataByName = {
+    weekly:    weeklyData,
+    monthly:   monthlyData,
+    quarterly: quarterlyData,
+    yearly:    yearlyData,
+  };
+  monthsInPeriodByName = {
+    weekly:    buildMonthsInPeriod(weeklyData),
+    monthly:   buildMonthsInPeriod(monthlyData),
+    quarterly: null, // set after precomputeMonthlyByQuarter
+    yearly:    buildMonthsInPeriod(yearlyData),
+  };
+}
 
 function precomputeMonthlyByQuarter() {
   if (!quarterlyData || !monthlyData) { monthlyByQuarter = null; return; }
@@ -112,37 +181,80 @@ function precomputeMonthlyByQuarter() {
     out[qi] = list;
   }
   monthlyByQuarter = out;
+  if (monthsInPeriodByName) monthsInPeriodByName.quarterly = out;
 }
-let shiftedQuarterlyCache = []; // populated by init() — array of qData arrays, parallel to envelopeShiftDays
+let shiftedQuarterlyCache = []; // current cache for whichever rebalance period is active
 let envelopeShiftDays    = []; // populated by init() — trading-day shift for each cache slot
 let envelopeShiftCount   = 0;  // populated by init() — = envelopeShiftDays.length
+// Per-period memo so switching weekly → yearly → quarterly doesn't rebuild
+// shifted-data cache each time. Build is O(N_shifts × N_periods).
+let _envelopeCacheByPeriod = {};
+let _currentEnvelopePeriod = null;
+
+function ensureEnvelopeCacheForPeriod(period) {
+  period = period || 'quarterly';
+  if (_currentEnvelopePeriod === period && _envelopeCacheByPeriod[period]) {
+    return;
+  }
+  if (!_envelopeCacheByPeriod[period]) {
+    const shifts = buildEnvelopeShifts(period);
+    const cache  = shifts.map(s => getShiftedPeriodData(period, s));
+    _envelopeCacheByPeriod[period] = { shifts, cache };
+  }
+  const entry = _envelopeCacheByPeriod[period];
+  envelopeShiftDays     = entry.shifts;
+  envelopeShiftCount    = entry.shifts.length;
+  shiftedQuarterlyCache = entry.cache;
+  _currentEnvelopePeriod = period;
+}
 
 // One trading-quarter is roughly 63 trading days (5 days × 13 weeks, holidays
 // notwithstanding). Used to space the coarse "quarter-offset" envelope lines.
-const ENVELOPE_DAYS_PER_QUARTER = 63;
-const ENVELOPE_QUARTER_OFFSETS  = 40;  // # of additional quarter-spaced offsets
+const ENVELOPE_DAYS_PER_QUARTER = 63;            // legacy default (preserved for chart code that hardcoded it)
+const ENVELOPE_MAX_GHOSTS       = 100;           // density cap — sample evenly if a period would produce more than this
 
-// Build the list of trading-day shifts the envelope renders. Combines:
-//   • 1..63 daily shifts — fine-grained "what if the rebalance day-of-quarter
-//     was different" sensitivity within a single quarter.
-//   • 63 + k×63 for k=1..40 quarter-spaced shifts — coarse "what if the
-//     strategy started k quarters earlier" comparison band.
-function buildEnvelopeShifts() {
+// Build the list of trading-day shifts the envelope renders for the given
+// rebalance period. Each shift rolls every period-end check back by N
+// trading days, so the envelope shows "what if I rebalanced N days earlier
+// within each period" for N from 1 to ~one full period. We deliberately do
+// NOT include cross-period shifts (e.g. for quarterly, shifts of 126/189/...
+// days that effectively start the strategy in a different era).
+//
+// For periods with more days than ENVELOPE_MAX_GHOSTS, we sample evenly so
+// rendering stays under 100 lines (e.g. yearly = 252 trading days → 100
+// ghosts, ~every 2-3 days).
+function buildEnvelopeShifts(period) {
+  const days = PERIOD_DAYS[period] || ENVELOPE_DAYS_PER_QUARTER;
   const shifts = [];
-  for (let d = 1; d <= ENVELOPE_DAYS_PER_QUARTER; d++) shifts.push(d);
-  for (let q = 1; q <= ENVELOPE_QUARTER_OFFSETS; q++) {
-    shifts.push(ENVELOPE_DAYS_PER_QUARTER + q * ENVELOPE_DAYS_PER_QUARTER);
+  if (days <= ENVELOPE_MAX_GHOSTS) {
+    for (let d = 1; d <= days; d++) shifts.push(d);
+  } else {
+    // Even sampling. Always include 1 and `days` for the endpoints.
+    const step = days / ENVELOPE_MAX_GHOSTS;
+    for (let i = 0; i < ENVELOPE_MAX_GHOSTS; i++) {
+      shifts.push(Math.max(1, Math.round(1 + i * step)));
+    }
   }
   return shifts;
 }
 
 function getShiftedQuarterly(dayShift) {
-  return quarterlyData.map(q => {
-    const naturalIdx = dailyDateToIdx.get(q[0]);
-    if (naturalIdx == null) return q;
+  return getShiftedPeriodData('quarterly', dayShift);
+}
+
+// Period-aware shifted data: same logic as getShiftedQuarterly but parameterized
+// by the rebalance period. Each row's date is mapped to the daily entry N
+// trading days earlier in time, so the envelope's "rebalance N days earlier"
+// semantics work across weekly / monthly / quarterly / yearly.
+function getShiftedPeriodData(period, dayShift) {
+  const src = (periodDataByName && periodDataByName[period]) || quarterlyData;
+  if (!src) return [];
+  return src.map(p => {
+    const naturalIdx = dailyDateToIdx.get(p[0]);
+    if (naturalIdx == null) return p;
     const shiftedIdx = Math.max(0, naturalIdx - dayShift);
     const d = daily[shiftedIdx];
-    return [d.date, d.tqqq, d.qqq, d.spy, d.soxl, d.qqq5];
+    return [d.date, d.tqqq, d.qqq, d.spy, d._unused, d.qqq5];
   });
 }
 
@@ -157,7 +269,9 @@ function getShiftedQuarterly(dayShift) {
 // runs many simulations so this matters.
 const SMA_WINDOWS = [100, 150, 200, 250];
 const SMA_ASSETS  = ['qqq', 'spy'];
+const RSI_WINDOW  = 10; // fixed; Reddit's TFTLT default. Could be exposed if needed.
 let smaAtMonthlyByKey = null; // { 'qqq_200': [sma per monthlyData entry, or null] }
+let rsiAtMonthlyByAsset = null; // { 'qqq': [RSI(10) per monthlyData entry, or null] }
 
 function rollingSMA(values, window) {
   const out = new Array(values.length);
@@ -175,8 +289,35 @@ function rollingSMA(values, window) {
   return out;
 }
 
+// Wilder-smoothed RSI. Returns array of RSI values per daily index, null
+// until enough history accumulates. Default window 10 trading days — matches
+// the "TFTLT" Reddit strategy's overheat threshold convention.
+function rollingRSI(values, window) {
+  const out = new Array(values.length).fill(null);
+  if (values.length < window + 1) return out;
+  let gainSum = 0, lossSum = 0;
+  for (let i = 1; i <= window; i++) {
+    const d = values[i] - values[i-1];
+    if (d > 0) gainSum += d; else lossSum -= d;
+  }
+  let avgGain = gainSum / window;
+  let avgLoss = lossSum / window;
+  out[window] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  for (let i = window + 1; i < values.length; i++) {
+    const d = values[i] - values[i-1];
+    const g = d > 0 ? d : 0;
+    const l = d < 0 ? -d : 0;
+    // Wilder's smoothing: prior average × (window-1) + new value, all over window.
+    avgGain = (avgGain * (window - 1) + g) / window;
+    avgLoss = (avgLoss * (window - 1) + l) / window;
+    out[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  }
+  return out;
+}
+
 function precomputeSMASeries() {
   smaAtMonthlyByKey = {};
+  rsiAtMonthlyByAsset = {};
   if (!daily || !monthlyData || !dailyDateToIdx) return;
   const seriesByAsset = {
     qqq: daily.map(d => d.qqq),
@@ -193,5 +334,11 @@ function precomputeSMASeries() {
         return idx != null ? dailySMA[idx] : null;
       });
     }
+    // RSI(10) at each monthly entry — same indexing scheme as SMA.
+    const dailyRSI = rollingRSI(dailyVals, RSI_WINDOW);
+    rsiAtMonthlyByAsset[asset] = monthlyData.map(([date]) => {
+      const idx = dailyDateToIdx.get(date);
+      return idx != null ? dailyRSI[idx] : null;
+    });
   }
 }
