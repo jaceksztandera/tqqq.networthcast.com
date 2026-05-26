@@ -108,11 +108,35 @@ ck('quarterly: signal grows 9% PER QUARTER → target 654 after q1', approx(r.lo
 })();
 const ry = simulate(1000, 0, 0, 0, 7, 0, { rebalancePeriod: 'yearly', qGrowth: 0.09 });
 ck('yearly: signal grows 9% PER YEAR (literal) → target 654 after year 1', approx(ry.log[1].target, 654, 1e-4), 'got ' + ry.log[1].target.toFixed(2));
+// Live snapshot tail: chart exit (2021-12-31) is past the last anniversary
+// (2021-03-31), so simulate appends a non-rebalancing SNAPSHOT row at exit so
+// the chart's right edge reflects current shares × current price + current cash.
+const lastRow = ry.log[ry.log.length - 1];
+ck('yearly live snapshot: last row is SNAPSHOT at chart exit',
+   lastRow.action === 'SNAPSHOT' && lastRow.date === '2021-12-31',
+   JSON.stringify({ date: lastRow.date, action: lastRow.action }));
+ck('yearly live snapshot: total conserved (flat prices + no contrib → 1000)',
+   approx(lastRow.total, 1000, 1e-6), 'total ' + lastRow.total.toFixed(2));
 
-// ----- #4 signal line is NOT reset down after a cash-throttled buy -----
+// ----- target grows from PRIOR HOLDING (not prior target) -----
+// At q1 the prior holding is the start holding (600) — same as the old "grow
+// from prior target" gave — so target after q1 is still 600 × 1.09 = 654.
 install(MONTHS.map((d, i) => i <= 2 ? 100 : 10));
 r = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09 });
-ck('#4 signal line stays on formula after throttled buy (654, not ~420)', approx(r.log[1].target, 654, 1e-6), 'target ' + r.log[1].target);
+ck('target after q1 = prior holding × (1+g) = 600 × 1.09 = 654', approx(r.log[1].target, 654, 1e-6), 'target ' + r.log[1].target);
+// The behaviour difference shows up at q2: after q1's throttled buy left the
+// holding at 420 (not the 654 the target asked for), q2's target grows from
+// 420, NOT from the runaway 654. So 420 × 1.09 = 457.8 instead of 654 × 1.09.
+r = simulate(1000, 0, 0, 0, 2, 0, { qGrowth: 0.09 });
+ck('target at q2 grows from prior HOLDING (457.8), not prior target (712.9)',
+   approx(r.log[2].target, 420 * 1.09, 1e-3),
+   'q1 holding ' + r.log[1].tqqqVal.toFixed(1) + ' · q2 target ' + r.log[2].target.toFixed(2));
+// targetFromPrevTarget: TRUE = compound the target on itself —
+// q2's target then grows from the prior TARGET (654), not the throttled holding.
+r = simulate(1000, 0, 0, 0, 2, 0, { qGrowth: 0.09, targetFromPrevTarget: true });
+ck('opts.targetFromPrevTarget: q2 target grows from prior TARGET (712.9) instead',
+   approx(r.log[2].target, 654 * 1.09, 1e-3),
+   'q2 target ' + r.log[2].target.toFixed(2));
 
 // ----- #2 money-weighted (IRR) return -----
 ck('IRR: -100 @t0, +110 @t1 → 10%', approx(computeMoneyWeightedReturn([{ t: 0, cf: -100 }, { t: 1, cf: 110 }]), 10, 1e-4));

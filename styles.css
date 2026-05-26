@@ -1349,6 +1349,35 @@
     flex-direction: column;
     gap: 6px;
   }
+  /* Banner shown when share-link strategies are loaded but not yet saved
+     locally. Click "Save" to persist them to localStorage. */
+  .shared-strategies-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 7px 9px;
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid rgba(34, 211, 238, 0.3);
+    border-radius: 6px;
+    font: 500 11px 'DM Sans', sans-serif;
+    color: var(--text);
+    line-height: 1.4;
+  }
+  .shared-strategies-banner .ssb-text { flex: 1 1 auto; }
+  .shared-strategies-banner .ssb-save {
+    flex: 0 0 auto;
+    padding: 4px 12px;
+    background: var(--accent);
+    color: #0a0e17;
+    border: none;
+    border-radius: 4px;
+    font: 700 11px 'DM Sans', sans-serif;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: filter 0.15s;
+  }
+  .shared-strategies-banner .ssb-save:hover { filter: brightness(1.1); }
   .saved-config-pill {
     background: rgba(30, 42, 63, 0.45);
     border: 1px solid var(--border);

@@ -78,6 +78,7 @@
       rebalancePeriod: _str('select-9sig-period', 'quarterly'),
       cashPct:       _num('select-9sig-cash', 40) / 100,
       contribDeployPct: (document.getElementById('select-9sig-deploy') || {}).checked ? 0.5 : 0,
+      targetFromPrevTarget: !!(document.getElementById('select-9sig-target-compound') || {}).checked,
       buyThrottlePct: _num('select-9sig-buypower', 90),
     });
   }

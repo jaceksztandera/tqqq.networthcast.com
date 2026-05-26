@@ -272,7 +272,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const monthsInPeriod = (typeof monthsInPeriodByName !== 'undefined' && monthsInPeriodByName && monthsInPeriodByName[period]) || null;
   // Default `qData` chain: opts.qData wins (envelope shifts pass shifted data);
   // otherwise use the period-appropriate series; fall back to quarterlyData.
-  const qData = opts.qData || periodData || quarterlyData;
+  let qData = opts.qData || periodData || quarterlyData;
   const skipBH = !!opts.skipBH;
   // Signal-line growth rate, applied LITERALLY per rebalance period. The number
   // the user picks IS the per-period growth: "grow the signal line by 9%" with
@@ -314,6 +314,13 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   // Buying-power cap: a BUY never spends more than this fraction of cash, so
   // some dry powder is always kept. Canonical 9Sig keeps 10% (spends 90%).
   const buyThrottle = Math.max(0, Math.min(1, (opts.buyThrottlePct != null ? +opts.buyThrottlePct : 90) / 100));
+  // Target-growth base. Default false → each period's target grows from the
+  // PREVIOUS HOLDING (target re-anchors to reality each period — no runaway gap
+  // when buys are throttled / 30-down fires). Set true to keep compounding the
+  // target on its OWN value (the classic canonical-Kelly behaviour — the target
+  // ratchets ahead during drawdowns and the strategy buys toward a higher
+  // number). Exposed as a checkbox in the 9sig panel so users can compare both.
+  const targetFromPrevTarget = !!opts.targetFromPrevTarget;
 
   // entryIdx / exitIdx are passed as indices into `quarterlyData` (slider
   // position, with the "enter at quarter start" shift already applied by the
@@ -321,7 +328,66 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   // When the rebalance period isn't quarterly we map those to
   // the nearest equivalent indices in the period data — same date span,
   // different grain.
-  if (period !== 'quarterly' && quarterlyData && qData !== quarterlyData && periodData) {
+  let _customYearly = false;
+  // The "live snapshot" tail: when the chart's exit date is past the last
+  // rebalance (always true for yearly unless the user picked an exact 12-month
+  // multiple of entry), append a non-rebalancing row at the exit so the line's
+  // right edge reflects current shares × current price + current cash. Without
+  // this the line goes flat from the last anniversary to today and people
+  // mistake intra-period gains for underperformance.
+  let _sentinelIdx = -1;
+  if (period === 'yearly' && !opts.qData && quarterlyData && monthlyData) {
+    // "Yearly" = rebalance every 12 calendar months FROM the chart's entry,
+    // NOT at calendar year-ends. So the strategy starts at the chart's first
+    // label with $100K and the first rebalance lands exactly a year later —
+    // regardless of when in the year you started. Each yearly run gets its
+    // own anniversary-based dates instead of every yearly strategy sharing
+    // 12-31 boundaries (which made strategies started mid-year visually
+    // begin mid-period at a different value than the others).
+    const startDate = quarterlyData[entryIdx] && quarterlyData[entryIdx][0];
+    const endDate   = quarterlyData[exitIdx]  && quarterlyData[exitIdx][0];
+    if (startDate && endDate) {
+      const _addYears = (s, n) => {
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(Date.UTC(y + n, m - 1, d)).toISOString().slice(0, 10);
+      };
+      const _monthlyRowAtOrBefore = (date) => {
+        let row = null;
+        for (let i = 0; i < monthlyData.length; i++) {
+          if (monthlyData[i][0] <= date) row = monthlyData[i]; else break;
+        }
+        return row;
+      };
+      const rolling = [];
+      let cur = startDate;
+      while (cur <= endDate) {
+        const row = _monthlyRowAtOrBefore(cur);
+        if (row) rolling.push(row);
+        cur = _addYears(cur, 1);
+      }
+      // Append a "live snapshot" sentinel at the chart's actual exit if the
+      // last anniversary is earlier. Index recorded so the rebalance loop can
+      // skip its sell/buy logic for this row (it's a value snapshot, not a
+      // rebalance — shares unchanged, only cash + price change).
+      if (rolling.length >= 1) {
+        const lastRow = rolling[rolling.length - 1];
+        if (endDate > lastRow[0]) {
+          const exitRow = _monthlyRowAtOrBefore(endDate);
+          if (exitRow && exitRow[0] > lastRow[0]) {
+            rolling.push(exitRow);
+            _sentinelIdx = rolling.length - 1;
+          }
+        }
+      }
+      if (rolling.length >= 2) {
+        qData = rolling;
+        entryIdx = 0;
+        exitIdx = rolling.length - 1;
+        _customYearly = true;
+      }
+    }
+  }
+  if (!_customYearly && period !== 'quarterly' && quarterlyData && qData !== quarterlyData && periodData) {
     const entryDate = quarterlyData[entryIdx] && quarterlyData[entryIdx][0];
     const exitDate  = quarterlyData[exitIdx]  && quarterlyData[exitIdx][0];
     if (entryDate && exitDate) {
@@ -345,6 +411,11 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   let cash = initial * cashPct;
   let tqqqShares = (initial * stockPct) / qSlice[0][ulCol];
   let signalLine = initial * stockPct; // target value starts at initial stock allocation
+  // Each new target grows from the PREVIOUS REBALANCE's post-rebalance holding
+  // (not from the prior target). If the strategy underperforms — a throttled
+  // buy, a crash-zone HOLD, or a spike reset — the target naturally tracks the
+  // lower holding instead of ratcheting away on its own formula.
+  let prevHolding = initial * stockPct; // = the post-rebalance tqqqVal at qi=0
   let totalInvested = initial;
   let investedCompounded = initial;
   let currentMonthly = monthly;
@@ -422,101 +493,112 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         }
       }
 
-      // Signal line grows 9% per quarter + 50% of new cash contributions
-      signalLine = signalLine * (1 + qGrowth) + newCashThisQ * 0.5;
-
-      const currentTqqqValue = tqqqShares * qPrice;
-      const diff = currentTqqqValue - signalLine;
       let action = '';
+      // The sentinel row is a value snapshot at the chart's exit — NOT a
+      // rebalance. Skip the signal-grow / sell-buy / spike-reset machinery; the
+      // cash that accrued in the contribution loop above and the holding
+      // (re-priced at exit below) ARE the live values we want to display.
+      if (qi !== _sentinelIdx) {
+        // Signal line grows 9% per quarter + 50% of new cash contributions.
+        // Default base is the prior period's post-rebalance HOLDING — anchors
+        // the target to what the strategy actually held last time, so the gap
+        // can't run away on throttled buys / crash holds. The "compound on
+        // itself" toggle switches the base to the prior SIGNAL instead (target
+        // keeps compounding on its own formula — canonical Kelly).
+        const growBase = targetFromPrevTarget ? signalLine : prevHolding;
+        signalLine = growBase * (1 + qGrowth) + newCashThisQ * 0.5;
 
-      // 30-down no-sell rule: if price < (1-crashDrop)% of the trailing
-      // peak, skip the sell — but only up to 2 consecutive quarters, then
-      // sell anyway. Lookback window is configurable (24 months = canonical
-      // 2-year peak). Date math: convert YYYY-MM to absolute month index,
-      // subtract the lookback, recompose into a YYYY-MM-DD string that
-      // sorts lexicographically just like the qSlice dates do.
-      const _y = parseInt(qDate.substring(0, 4));
-      const _m = parseInt(qDate.substring(5, 7));
-      const _totalMonths = _y * 12 + (_m - 1) - crashLookbackMonths;
-      const _ny = Math.floor(_totalMonths / 12);
-      const _nm = (_totalMonths % 12 + 12) % 12 + 1;
-      const lookbackThreshold = String(_ny).padStart(4, '0') + '-' + String(_nm).padStart(2, '0') + qDate.substring(7);
-      let peak2y = qPrice;
-      for (let k = qi; k >= 0; k--) {
-        if (qSlice[k][0] < lookbackThreshold) break;
-        if (qSlice[k][ulCol] > peak2y) peak2y = qSlice[k][ulCol];
-      }
-      const inCrashZone = qPrice < peak2y * crashFactor;
+        const currentTqqqValue = tqqqShares * qPrice;
+        const diff = currentTqqqValue - signalLine;
 
-      if (diff > 0 && !inCrashZone) {
-        // SELL: TQQQ above signal, sell excess to cash
-        const sharesToSell = diff / qPrice;
-        tqqqShares -= sharesToSell;
-        cash += diff;
-        action = 'SELL ' + fmt(diff);
-        crashNoSellCount = 0;
-      } else if (diff > 0 && inCrashZone && crashNoSellCount < 2) {
-        // Signal says sell but we're in crash zone and haven't skipped 2 times yet — hold
-        crashNoSellCount++;
-        action = 'HOLD (30d ' + crashNoSellCount + '/2)';
-      } else if (diff > 0 && inCrashZone && crashNoSellCount >= 2) {
-        // Crash zone but already skipped 2 consecutive quarters — sell anyway
-        const sharesToSell = diff / qPrice;
-        tqqqShares -= sharesToSell;
-        cash += diff;
-        action = 'SELL ' + fmt(diff) + ' (30d expired)';
-        crashNoSellCount = 0;
-      } else if (diff < 0 && cash > 0) {
-        // BUY: TQQQ below signal, buy from cash (90% throttle)
-        crashNoSellCount = 0;
-        const available = cash * buyThrottle;
-        const needed = Math.min(-diff, available);
-        if (needed > 0) {
-          const sharesToBuy = needed / qPrice;
-          tqqqShares += sharesToBuy;
-          cash -= needed;
-          action = needed < -diff ? 'BUY ' + fmt(needed) + ' (part)' : 'BUY ' + fmt(needed);
+        // 30-down no-sell rule: if price < (1-crashDrop)% of the trailing
+        // peak, skip the sell — but only up to 2 consecutive quarters, then
+        // sell anyway. Lookback window is configurable (24 months = canonical
+        // 2-year peak). Date math: convert YYYY-MM to absolute month index,
+        // subtract the lookback, recompose into a YYYY-MM-DD string that
+        // sorts lexicographically just like the qSlice dates do.
+        const _y = parseInt(qDate.substring(0, 4));
+        const _m = parseInt(qDate.substring(5, 7));
+        const _totalMonths = _y * 12 + (_m - 1) - crashLookbackMonths;
+        const _ny = Math.floor(_totalMonths / 12);
+        const _nm = (_totalMonths % 12 + 12) % 12 + 1;
+        const lookbackThreshold = String(_ny).padStart(4, '0') + '-' + String(_nm).padStart(2, '0') + qDate.substring(7);
+        let peak2y = qPrice;
+        for (let k = qi; k >= 0; k--) {
+          if (qSlice[k][0] < lookbackThreshold) break;
+          if (qSlice[k][ulCol] > peak2y) peak2y = qSlice[k][ulCol];
+        }
+        const inCrashZone = qPrice < peak2y * crashFactor;
+
+        if (diff > 0 && !inCrashZone) {
+          // SELL: TQQQ above signal, sell excess to cash
+          const sharesToSell = diff / qPrice;
+          tqqqShares -= sharesToSell;
+          cash += diff;
+          action = 'SELL ' + fmt(diff);
+          crashNoSellCount = 0;
+        } else if (diff > 0 && inCrashZone && crashNoSellCount < 2) {
+          // Signal says sell but we're in crash zone and haven't skipped 2 times yet — hold
+          crashNoSellCount++;
+          action = 'HOLD (30d ' + crashNoSellCount + '/2)';
+        } else if (diff > 0 && inCrashZone && crashNoSellCount >= 2) {
+          // Crash zone but already skipped 2 consecutive quarters — sell anyway
+          const sharesToSell = diff / qPrice;
+          tqqqShares -= sharesToSell;
+          cash += diff;
+          action = 'SELL ' + fmt(diff) + ' (30d expired)';
+          crashNoSellCount = 0;
+        } else if (diff < 0 && cash > 0) {
+          // BUY: TQQQ below signal, buy from cash (90% throttle)
+          crashNoSellCount = 0;
+          const available = cash * buyThrottle;
+          const needed = Math.min(-diff, available);
+          if (needed > 0) {
+            const sharesToBuy = needed / qPrice;
+            tqqqShares += sharesToBuy;
+            cash -= needed;
+            action = needed < -diff ? 'BUY ' + fmt(needed) + ' (part)' : 'BUY ' + fmt(needed);
+          } else {
+            action = 'HOLD';
+          }
         } else {
+          crashNoSellCount = 0;
           action = 'HOLD';
         }
-      } else {
-        crashNoSellCount = 0;
-        action = 'HOLD';
-      }
 
-      // Spike reset rule: if TQQQ at least doubled this quarter AND the post-
-      // rebalance stock allocation is still 60–100% AND we're not in a 30-down
-      // no-sell period, force the stock fund back to a 60% allocation. This
-      // is the canonical 9Sig "spike reset" — a hard profit-take when a big
-      // upmove leaves the leveraged fund still dominating the portfolio.
-      const prevTqqqPrice = qSlice[qi - 1][ulCol];
-      const quarterlyTqqqGain = prevTqqqPrice > 0 ? (qPrice - prevTqqqPrice) / prevTqqqPrice : 0;
-      const postTqqqVal = tqqqShares * qPrice;
-      const postTotal   = postTqqqVal + cash;
-      const postAlloc   = postTotal > 0 ? postTqqqVal / postTotal : 0;
-      if (quarterlyTqqqGain >= spikeTrigger && postAlloc >= stockPct && postAlloc <= 1.0 && !inCrashZone) {
-        const targetTqqqVal = postTotal * stockPct;
-        const reduceBy = postTqqqVal - targetTqqqVal;
-        tqqqShares = targetTqqqVal / qPrice;
-        cash       = postTotal - targetTqqqVal;
-        signalLine = targetTqqqVal;
-        action = 'RESET ' + fmt(reduceBy) + ' (spike)';
+        // Spike reset rule: if TQQQ at least doubled this quarter AND the post-
+        // rebalance stock allocation is still 60–100% AND we're not in a 30-down
+        // no-sell period, force the stock fund back to a 60% allocation. This
+        // is the canonical 9Sig "spike reset" — a hard profit-take when a big
+        // upmove leaves the leveraged fund still dominating the portfolio.
+        const prevTqqqPrice = qSlice[qi - 1][ulCol];
+        const quarterlyTqqqGain = prevTqqqPrice > 0 ? (qPrice - prevTqqqPrice) / prevTqqqPrice : 0;
+        const postTqqqVal = tqqqShares * qPrice;
+        const postTotal   = postTqqqVal + cash;
+        const postAlloc   = postTotal > 0 ? postTqqqVal / postTotal : 0;
+        if (quarterlyTqqqGain >= spikeTrigger && postAlloc >= stockPct && postAlloc <= 1.0 && !inCrashZone) {
+          const targetTqqqVal = postTotal * stockPct;
+          const reduceBy = postTqqqVal - targetTqqqVal;
+          tqqqShares = targetTqqqVal / qPrice;
+          cash       = postTotal - targetTqqqVal;
+          signalLine = targetTqqqVal;
+          action = 'RESET ' + fmt(reduceBy) + ' (spike)';
+        }
+      } else {
+        action = 'SNAPSHOT';
       }
 
       const tqqqVal = tqqqShares * qPrice;
-      // NOTE: the signal line is NOT reset down to the actual holding when a buy
-      // can't close the gap (cash-throttled). It stays on its formula (grows from
-      // its previous value), so the target keeps tracking where the holding
-      // *should* be — canonical 9sig behaviour — and the strategy keeps buying
-      // toward it as cash arrives, instead of "forgiving" the deficit.
       log.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, action, invested: totalInvested, investedCompounded, target: signalLine });
       // Period-end snapshot (post-rebalance) — keeps the quarter series continuous.
       if (sampleQuarterly) samplePoints.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded });
+      prevHolding = tqqqVal; // next period's target grows from THIS period's holding
     } else {
       // First quarter — just record starting state
       const tqqqVal = tqqqShares * qSlice[0][ulCol];
       log.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, action: 'START', invested: totalInvested, investedCompounded, target: signalLine });
       if (sampleQuarterly) samplePoints.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded });
+      prevHolding = tqqqVal;
     }
     prevQDate = qDate;
   }

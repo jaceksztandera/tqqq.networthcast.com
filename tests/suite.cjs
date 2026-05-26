@@ -442,6 +442,52 @@ async function run() {
   ck('main 9sig final value unchanged by the visible weekly strategy (computed at its own quarterly period)', vAlone === vWithWeekly, `alone=${vAlone} withWeekly=${vWithWeekly}`);
   ck('no data/meta length mismatch with mixed-period strategies', (await lengthIntegrity(page)).length === 0, JSON.stringify(await lengthIntegrity(page)));
 
+  // ===== 14. share-link strategies: not auto-saved, banner "Save" persists =====
+  section('share-link strategies: not auto-saved, banner "Save" persists them');
+  await fresh(page);
+  const sc = [{ type: '9sig', name: 'Shared 9sig', params: { 'select-9sig-growth': '12' }, color: '#e879f9' }];
+  await page.goto(BASE + '/index.html?v=12&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const afterLoad = await page.evaluate(() => ({
+    total: getSavedConfigs().length,
+    transientCount: getSavedConfigs().filter(c => c._transient).length,
+    hasBanner: !!document.querySelector('.shared-strategies-banner'),
+    hasSaveBtn: !!document.getElementById('save-shared-strategies'),
+    ls: JSON.parse(localStorage.getItem('9sig-saved-configs') || 'null'),
+  }));
+  ck('shared strategy renders on the chart', afterLoad.total === 1, JSON.stringify(afterLoad));
+  ck('shared strategy is transient (NOT written to localStorage)', afterLoad.transientCount === 1 && afterLoad.ls === null, JSON.stringify(afterLoad));
+  ck('banner + Save button appear', afterLoad.hasBanner && afterLoad.hasSaveBtn);
+
+  await page.click('#save-shared-strategies'); await page.waitForTimeout(250);
+  const afterSave = await page.evaluate(() => ({
+    transientCount: getSavedConfigs().filter(c => c._transient).length,
+    hasBanner: !!document.querySelector('.shared-strategies-banner'),
+    ls: JSON.parse(localStorage.getItem('9sig-saved-configs') || 'null'),
+  }));
+  ck('after Save: no transient configs left', afterSave.transientCount === 0, JSON.stringify(afterSave));
+  ck('after Save: banner is gone', !afterSave.hasBanner);
+  ck('after Save: strategy is now in localStorage', afterSave.ls && afterSave.ls.length === 1, JSON.stringify(afterSave));
+
+  // Reload WITHOUT ?sc= — saved strategy still persists locally.
+  await page.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const afterReload = await page.evaluate(() => ({ total: getSavedConfigs().length, banner: !!document.querySelector('.shared-strategies-banner') }));
+  ck('reload (no ?sc=): saved strategy persists, no banner', afterReload.total === 1 && !afterReload.banner, JSON.stringify(afterReload));
+
+  // And the "discard" path: a fresh load with ?sc= but the user doesn't click Save → reload without ?sc → strategy gone.
+  await fresh(page);
+  await page.goto(BASE + '/index.html?v=12&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  await page.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const afterDiscard = await page.evaluate(() => getSavedConfigs().length);
+  ck('without clicking Save, reload without ?sc= drops the shared strategy', afterDiscard === 0, 'count=' + afterDiscard);
+
   await browser.close();
 
   // ---- report ----

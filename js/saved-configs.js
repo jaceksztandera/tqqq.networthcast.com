@@ -19,7 +19,7 @@ const CONFIG_PARAM_IDS = {
   '9sig': ['select-9sig-underlying', 'select-9sig-growth', 'select-9sig-crashdrop',
            'select-9sig-crashwin', 'select-9sig-spike', 'select-9sig-period',
            'select-9sig-cash', 'select-9sig-cashrate', 'select-9sig-buypower',
-           'select-9sig-deploy'],
+           'select-9sig-deploy', 'select-9sig-target-compound'],
   'sma':  ['select-sma-asset', 'select-sma-window', 'select-sma-underlying',
            'select-sma-cashrate', 'select-sma-entry-buf', 'select-sma-exit-buf',
            'select-sma-rsi-oh', 'select-sma-rsi-cool', 'select-sma-dip-init',
@@ -53,7 +53,13 @@ window._editingConfigId = null;
 })();
 
 function persistSavedConfigs() {
-  try { localStorage.setItem(LS_SAVED_KEY, JSON.stringify(savedConfigs)); } catch (e) {}
+  // Configs loaded from a share-link arrive as `_transient`: they render on
+  // the chart so the recipient can see them, but they're NOT written to
+  // localStorage until the user explicitly clicks "Save" on the banner. So
+  // every persist filters transient entries out — only saved-for-real configs
+  // end up in localStorage.
+  const persistable = savedConfigs.filter(c => !c._transient);
+  try { localStorage.setItem(LS_SAVED_KEY, JSON.stringify(persistable)); } catch (e) {}
 }
 function getSavedConfigs() { return savedConfigs; }
 
@@ -766,6 +772,7 @@ function computeConfigSeries(cfg, ctx) {
       rebalancePeriod: pget(p, 'select-9sig-period', 'quarterly') || 'quarterly',
       cashPct: (+pget(p, 'select-9sig-cash', 40) || 0) / 100,
       contribDeployPct: (pget(p, 'select-9sig-deploy', '0') === '1') ? 0.5 : 0,
+      targetFromPrevTarget: pget(p, 'select-9sig-target-compound', '0') === '1',
       buyThrottlePct: +pget(p, 'select-9sig-buypower', 90) || 90,
     };
     // A yearly config is coarser than the chart's quarterly axis floor → get
@@ -1219,7 +1226,6 @@ function importSharedConfigs(arr) {
   if (!Array.isArray(arr)) return;
   const sig = (c) => `${c.type}|${c.name || ''}|${c.code || ''}|${JSON.stringify(c.params || {})}`;
   const existing = new Set(savedConfigs.map(sig));
-  let added = false;
   for (const c of arr) {
     if (!c || !c.type || existing.has(sig(c))) continue;
     const cfg = {
@@ -1231,13 +1237,27 @@ function importSharedConfigs(arr) {
       params: c.params || {},
       color: c.color || nextConfigColor(),
       hidden: !!c.hidden,
+      // Transient: shown on the chart this session but NOT written to localStorage.
+      // The recipient clicks "Save" on the banner to keep them locally.
+      _transient: true,
     };
     if (c.type === 'custom') { cfg.code = c.code || ''; cfg.desc = c.desc || ''; } // safe to run: sandboxed
     savedConfigs.push(cfg);
     existing.add(sig(c));
-    added = true;
   }
-  if (added) persistSavedConfigs();
+}
+
+// Convert every currently-transient (share-link) config into a regular saved
+// strategy and write to localStorage. Triggered by the "Save" banner button.
+function saveSharedStrategies() {
+  let changed = false;
+  for (const c of savedConfigs) {
+    if (c._transient) { delete c._transient; changed = true; }
+  }
+  if (changed) {
+    persistSavedConfigs();
+    renderSavedConfigPills();
+  }
 }
 
 // Green success flash after a save/update. The save bar gets rebuilt by the
@@ -1433,8 +1453,19 @@ function renderSavedConfigPills() {
     return;
   }
   host.hidden = false;
+  // Shared-link configs aren't auto-saved — they're only kept locally if the
+  // user clicks "Save" on this banner. (Without the click they'll disappear
+  // when the recipient leaves the page; with it they're written to localStorage
+  // like any other saved strategy.)
+  const transientN = savedConfigs.reduce((n, c) => n + (c._transient ? 1 : 0), 0);
+  const banner = transientN > 0 ? `
+    <div class="shared-strategies-banner">
+      <span class="ssb-text">${transientN} shared strateg${transientN === 1 ? 'y' : 'ies'} from the link — won't be kept unless you save.</span>
+      <button type="button" class="ssb-save" id="save-shared-strategies">Save${transientN > 1 ? ' all' : ''}</button>
+    </div>` : '';
   host.innerHTML = `
     <div class="saved-configs-label">Saved strategies</div>
+    ${banner}
     <div class="saved-configs-list">${savedConfigs.map(buildConfigPillHtml).join('')}</div>`;
   setupConfigDragReorder();
 }
@@ -1787,6 +1818,9 @@ document.addEventListener('input', (e) => {
 document.addEventListener('click', (e) => {
   const tgt = e.target;
   if (!tgt || !tgt.closest) return;
+  // "Save shared strategies" banner — persists the share-link strategies that
+  // are currently transient (rendering on the chart but not in localStorage).
+  if (tgt.closest('#save-shared-strategies')) { saveSharedStrategies(); return; }
   // Sub-series chip for a saved 9sig → toggle that strategy's own Holding/Target/
   // Cash line (persisted on the config, so it never flips to the canonical base).
   const subChip = tgt.closest('.cfg-sub-chip');

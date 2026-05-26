@@ -885,6 +885,7 @@ function render() {
   // Checkbox: ticked → deploy half of each contribution into stock immediately
   // at the month's price, rest waits for rebalance. Off → canonical 9sig.
   const contribDeployPct = ((document.getElementById('select-9sig-deploy') || {}).checked) ? 0.5 : 0;
+  const targetFromPrevTarget = !!((document.getElementById('select-9sig-target-compound') || {}).checked);
   const buyThrottlePct = (+((document.getElementById('select-9sig-buypower') || {}).value) || 90);
 
   const sigOpts = {
@@ -896,6 +897,7 @@ function render() {
     rebalancePeriod: mainPeriod,
     cashPct,
     contribDeployPct,
+    targetFromPrevTarget,
     buyThrottlePct,
     // A yearly run is coarser than the quarterly x-axis floor → ask the sim for
     // quarter-end value snapshots so the line/hover have quarter resolution.
@@ -988,6 +990,7 @@ function render() {
         sampleQuarterly: mainPeriod === 'yearly',
         cashPct,
         contribDeployPct,
+        targetFromPrevTarget,
         buyThrottlePct,
       }))
     : [];

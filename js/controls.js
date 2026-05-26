@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-dip-init','select-sma-dip-r1-drop','select-sma-dip-r1-add','select-sma-dip-r2-drop','select-sma-dip-r2-add'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-dip-init','select-sma-dip-r1-drop','select-sma-dip-r1-add','select-sma-dip-r2-drop','select-sma-dip-r2-add'];
 const LS_KEY = '9sig-sliders';
 // Bump APP_VERSION whenever a backwards-incompatible change ships (a control
 // id is renamed, a default flips, a strategy is dropped). On mismatch we
@@ -8,7 +8,7 @@ const LS_KEY = '9sig-sliders';
 // nuking storage silently; the user clicks it when they're ready to load
 // the new defaults. If they've never visited before (no stored version),
 // we just record the current one without prompting.
-const APP_VERSION = 11; // bumped when 9sig buy-power cap became configurable
+const APP_VERSION = 12; // bumped when the target-compound toggle (select-9sig-target-compound) shipped
 // NOTE: when you change any js/*.js or styles.css, also bump the matching ?v=
 // cache-bust query on the <script>/<link> tags in index.html (keep it equal to
 // APP_VERSION) so returning browsers fetch the new files instead of stale cache.
@@ -145,7 +145,7 @@ function saveSliders() {
     render();
   });
 });
-['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-dip-init','select-sma-dip-r1-drop','select-sma-dip-r1-add','select-sma-dip-r2-drop','select-sma-dip-r2-add'].forEach(id => {
+['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-dip-init','select-sma-dip-r1-drop','select-sma-dip-r1-add','select-sma-dip-r2-drop','select-sma-dip-r2-add'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => {
     saveSliders();
@@ -518,6 +518,7 @@ function shareConfig() {
   if (get('select-9sig-cashrate'))   params.set('nr', get('select-9sig-cashrate').value);
   if (get('select-9sig-buypower'))   params.set('nbp', get('select-9sig-buypower').value);
   if (get('select-9sig-deploy'))     params.set('nd', get('select-9sig-deploy').checked ? '1' : '0');
+  if (get('select-9sig-target-compound')) params.set('tc', get('select-9sig-target-compound').checked ? '1' : '0');
 
   // Toggles
   params.set('l',
