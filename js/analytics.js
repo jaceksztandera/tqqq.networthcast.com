@@ -30,7 +30,7 @@
 //
 // Notes on the points shape per strategy:
 //   '9sig'      → sim.log[i].total           (also adopts log's other fields)
-//   'bh-*'      → sim.{bh,qqq,spy,qqq5}Points[i].value, skips entry quarter
+//   'bh-*'      → sim.{bh,qqq,spy,qld,qqq5,sso,spxl}Points[i].value, skips entry quarter
 //   'sma'       → sim.smaPoints[i].value, includes entry, has .state
 // Map a side-panel underlying selector to its earliest valid quarterly
 // index. TQQQ / QQQ5 are both synthesized to 1938 so the floor is always 0.
@@ -45,7 +45,10 @@ const STRATEGY_REGISTRY = {
   'bh-tqqq': { label: 'B&H TQQQ', pointsKey: 'bhPoints',       valueOf: (p) => p.value, prependStart: true  },
   'bh-qqq':  { label: 'B&H QQQ',  pointsKey: 'qqqPoints',      valueOf: (p) => p.value, prependStart: true  },
   'bh-spy':  { label: 'B&H SPY',  pointsKey: 'spyPoints',      valueOf: (p) => p.value, prependStart: true  },
+  'bh-qld':  { label: 'B&H QLD',  pointsKey: 'qldPoints',      valueOf: (p) => p.value, prependStart: true  },
   'bh-qqq5': { label: 'B&H QQQ5', pointsKey: 'qqq5Points',     valueOf: (p) => p.value, prependStart: true  },
+  'bh-sso':  { label: 'B&H SSO',  pointsKey: 'ssoPoints',      valueOf: (p) => p.value, prependStart: true  },
+  'bh-spxl': { label: 'B&H SPXL', pointsKey: 'spxlPoints',     valueOf: (p) => p.value, prependStart: true  },
   'sma':     { label: 'SMA', pointsKey: 'smaPoints',           valueOf: (p) => p.value, prependStart: false,
                // SMA depends on the current asset+window — earliest valid
                // quarter is when the SMA series first becomes non-null.
@@ -134,8 +137,11 @@ const STRATEGY_KEY_TO_DATASET_IDX = {
   'bh-tqqq': 2,
   'bh-qqq':  3,
   'bh-spy':  4,
-  'sma':     8,  // shifted from 9 when SOXL was removed
-  'bh-qqq5': 9,  // shifted from 10
+  'sma':     8,
+  'bh-qqq5': 9,
+  'bh-qld':  10,
+  'bh-sso':  11,
+  'bh-spxl': 12, // envelope shifts start at 13
 };
 
 // Reverse map. Cheap to build at module load.
@@ -223,18 +229,26 @@ function escA(s) {
 // Built-in strategies offered in the heatmap dropdowns, gated to those whose
 // line is currently visible on the main chart (snapshot at modal-open). Returns
 // [value, label] pairs. If the chart isn't up yet, returns them all.
+//
+// The Buy & Hold chip is a CONSOLIDATED slot — only dataset 2 ever shows on the
+// chart, and its content swaps based on #select-bh-underlying. So when BH is
+// visible we expose exactly one bh-* key here, matching whichever ticker the
+// user picked (its label is "B&H <TICKER>"); the other bh-* variants are
+// dormant and would otherwise be filtered out anyway.
 function _visibleBuiltinStrategies() {
   refresh9sigDisplayLabels();
   const mainChart = (typeof chart !== 'undefined') ? chart : null;
-  const all = [
-    ['9sig',     analyticsKeyLabel('9sig')],
-    ['bh-tqqq',  'B&H TQQQ'],
-    ['bh-qqq',   'B&H QQQ'],
-    ['bh-qqq5',  'B&H QQQ5'],
-    ['bh-spy',   'B&H SPY'],
-    ['sma',      'SMA'],
-  ];
-  return all.filter(([k]) => {
+  const bhUL = ((document.getElementById('select-bh-underlying') || {}).value || 'tqqq').toLowerCase();
+  const bhKey   = 'bh-' + bhUL;
+  const bhLabel = 'B&H ' + bhUL.toUpperCase();
+  // BH is whichever ticker is loaded into dataset 2 right now; visibility tracks
+  // dataset 2, not the dormant variant slot. Other strategies use their own idx.
+  const bhVisible = !mainChart || mainChart.isDatasetVisible(2);
+  const out = [['9sig', analyticsKeyLabel('9sig')]];
+  if (bhVisible) out.push([bhKey, bhLabel]);
+  out.push(['sma', 'SMA']);
+  return out.filter(([k]) => {
+    if (k === bhKey) return bhVisible; // already gated above
     const idx = STRATEGY_KEY_TO_DATASET_IDX[k];
     return !mainChart || idx == null || mainChart.isDatasetVisible(idx);
   });
@@ -823,14 +837,14 @@ const METRIC_OPTS = {
   sxb:     [0, 1, 2, 3, 4, 5],
   sro:     [0, 60, 70, 80, 90],
   src:     [0, 40, 50, 60, 70],
-  // SMA dip-buy ladder.
-  sdi:     [25, 50, 75, 100],
-  sd1:     [0, 20, 30, 40, 50, 60],
-  sa1:     [0, 25, 50, 75, 100],
-  sd2:     [0, 40, 60, 80, 90],
-  sa2:     [0, 25, 50, 75, 100],
+  // SMA out-asset, DCA ladders, bodyguard rules.
+  soa:     ['cash', 'qqq', 'spy'],
+  sdi:     [0, 3, 6, 12],
+  sdo:     [0, 3, 6, 12],
+  sbd:     [0, 20, 25, 30, 35, 40],
+  sbg:     [0, 30, 35, 40, 45, 50],
   // 9sig: which leveraged ETF to trade, and signal-line growth.
-  nu:      ['tqqq', 'qqq5'],
+  nu:      ['tqqq', 'qld', 'qqq5', 'sso', 'spxl'],
   ng:      [0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150],
   // 9sig rule customization:
   //   nc = 30-down no-sell drop % below 2-yr high (≥100 effectively disables)
@@ -842,7 +856,7 @@ const METRIC_OPTS = {
   np:      ['weekly', 'monthly', 'quarterly', 'yearly'],
   nh:      [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
   // SMA: which leveraged ETF the strategy holds when the signal is "in".
-  su:      ['tqqq', 'qqq5'],
+  su:      ['tqqq', 'qld', 'qqq5', 'sso', 'spxl'],
   // Per-strategy parked-cash interest rates (% per year).
   nr:      [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 14, 15, 16, 18, 20],
   scr:     [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 14, 15, 16, 18, 20],
@@ -886,7 +900,7 @@ const STRATEGY_METRIC_DEFS = {
 // raise / rate row still renders unconditionally).
 const STRATEGY_METRICS = {
   '9sig': ['nu', 'ng', 'np', 'nh', 'nr', 'nc', 'ncw', 'ns', 'nbp'],
-  'sma':  ['su', 'sa', 'sw', 'scr', 'seb', 'sxb', 'sro', 'src', 'sdi', 'sd1', 'sa1', 'sd2', 'sa2'],
+  'sma':  ['su', 'sa', 'sw', 'scr', 'seb', 'sxb', 'sro', 'src', 'soa', 'sdi', 'sdo', 'sbd', 'sbg'],
 };
 
 function metricSelect(key, label, current, fmt, dim) {
@@ -1061,16 +1075,6 @@ function showSpiralTooltip(tooltip, e, d, threshold) {
   positionSpiralTooltip(tooltip, e);
 }
 
-// Map a strategy to the underlying asset whose price drives the spiral's
-// year-over-year comparison.
-const SPIRAL_ASSET_FOR_STRATEGY = {
-  'bh-spy':   'spy',
-  'bh-qqq':   'qqq',
-  'bh-tqqq':  'tqqq',
-  'sma':  'tqqq',
-  '9sig': 'tqqq',
-};
-
 // Extract the strategy's quarterly (date, value) pairs from a simulate()
 // result. Used by the spiral to get per-year portfolio values.
 //
@@ -1104,7 +1108,7 @@ function strategyDateValues(sim, strat) {
 // 'custom-pct' (per-cell flat target derived from prior cell × (1+pct)).
 function baselineDateValues(sim, key, cellBaselineVal, stratSeries) {
   if (!sim) return [];
-  if (key === '9sig' || key === 'bh-tqqq' || key === 'bh-qqq' || key === 'bh-spy' || key === 'sma') {
+  if (key === '9sig' || key === 'bh-tqqq' || key === 'bh-qld' || key === 'bh-qqq' || key === 'bh-spy' || key === 'bh-qqq5' || key === 'bh-sso' || key === 'bh-spxl' || key === 'sma') {
     return strategyDateValues(sim, key);
   }
   if (key === 'compounded') {
@@ -1146,7 +1150,7 @@ let _perYearSimsKey = null;
 function _underlyingAndGrowth() {
   const ulSel = (id) => {
     const v = (document.getElementById(id) || {}).value;
-    return v === 'qqq5' ? 5 : 1;
+    return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1;
   };
   const cd = +((document.getElementById('select-9sig-crashdrop') || {}).value);
   const cw = +((document.getElementById('select-9sig-crashwin')  || {}).value);
@@ -1231,7 +1235,7 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
   if (!cfg || typeof simulate !== 'function') return [];
   const p = cfg.params || {};
   const get = (typeof pget === 'function') ? pget : (pp, id, d) => (pp && id in pp) ? pp[id] : d;
-  const ul  = (typeof ulColFromVal === 'function') ? ulColFromVal : (v) => (v === 'qqq5' ? 5 : 1);
+  const ul  = (typeof ulColFromVal === 'function') ? ulColFromVal : (v) => (v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1);
   if (cfg.type === '9sig') {
     const cd = +get(p, 'select-9sig-crashdrop', 30), sp = +get(p, 'select-9sig-spike', 100);
     const opts = {
@@ -1272,7 +1276,7 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
   if (cfg.type === 'bh') {
     const r = simulate(initial, monthly, 0, entryIdx, exitIdx, annualRaise, {});
     const key = get(p, 'select-bh-underlying', 'tqqq');
-    const arr = key === 'qqq' ? r.qqqPoints : key === 'spy' ? r.spyPoints : key === 'qqq5' ? (r.qqq5Points || []) : r.bhPoints;
+    const arr = key === 'qqq' ? r.qqqPoints : key === 'spy' ? r.spyPoints : key === 'qld' ? (r.qldPoints || []) : key === 'qqq5' ? (r.qqq5Points || []) : key === 'sso' ? (r.ssoPoints || []) : key === 'spxl' ? (r.spxlPoints || []) : r.bhPoints;
     return (arr || []).map(pt => ({ date: pt.date, value: pt.value }));
   }
   if (cfg.type === 'invested') {

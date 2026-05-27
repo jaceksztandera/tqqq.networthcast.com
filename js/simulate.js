@@ -12,13 +12,13 @@
 // `state` per quarter is 'in' (holding TQQQ) or 'out' (cash) at the end of
 // that quarter — the SMA strategy panel renders transition dots off this.
 // Column index into monthlyData rows for each tradeable asset name.
-// monthlyData layout: [date, tqqq, qqq, spy, _unused, qqq5]
-const SMA_ASSET_COL = { tqqq: 1, qqq: 2, spy: 3, qqq5: 5 };
+// monthlyData layout: [date, tqqq, qqq, spy, qld, qqq5, sso, spxl]
+const SMA_ASSET_COL = { tqqq: 1, qqq: 2, spy: 3, qld: 4, qqq5: 5, sso: 6, spxl: 7 };
 // Unleveraged equivalent — used for the bodyguard SMA-distance check.
 // (The bodyguard tracks the unleveraged underlying because the leveraged
 // version's "% above its own SMA" is structurally larger and useless as a
 // gauge of how stretched the underlying market is.)
-const SMA_UNLEVERAGED_OF = { tqqq: 'qqq', qqq5: 'qqq', qqq: 'qqq', spy: 'spy' };
+const SMA_UNLEVERAGED_OF = { tqqq: 'qqq', qld: 'qqq', qqq5: 'qqq', sso: 'spy', spxl: 'spy', qqq: 'qqq', spy: 'spy' };
 
 function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
   opts = opts || {};
@@ -66,7 +66,9 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
 
   const startDate = quarterlyData[entryIdx][0];
   const endDate   = quarterlyData[exitIdx][0];
-  const assetCol  = smaAsset === 'qqq' ? 2 : 3; // monthlyData = [date, tqqq, qqq, spy, _, qqq5]
+  // monthlyData layout: [date, tqqq, qqq, spy, qld, qqq5, sso, spxl] — sigAsset
+  // is QQQ (col 2) or SPY (col 3); the leveraged underlying is selected via ulCol.
+  const assetCol  = smaAsset === 'qqq' ? 2 : 3;
 
   // Underlying asset name (for state-machine target comparisons). Resolve from
   // ulCol so non-default underlyings (QQQ5) get the right unleveraged sibling.
@@ -135,10 +137,10 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   const unlev0 = sm0[unlevCol] || 0;
   let bgState = evalBodyguard(unlev0, bgSma0);
 
-  // Holdings: shares per tradeable asset (tqqq, qqq, spy, qqq5) + cash.
-  // Multiple buckets coexist mid-DCA; non-target buckets are sold instantly
+  // Holdings: shares per tradeable asset (tqqq, qqq, spy, qld, qqq5, sso, spxl) +
+  // cash. Multiple buckets coexist mid-DCA; non-target buckets are sold instantly
   // each month, target bucket is bought via the active DCA ladder.
-  const shares = { tqqq: 0, qqq: 0, spy: 0, qqq5: 0 };
+  const shares = { tqqq: 0, qqq: 0, spy: 0, qld: 0, qqq5: 0, sso: 0, spxl: 0 };
   let cash = initial;
   let totalInvested = initial;
   const startYear = parseInt(sm0[0].substring(0, 4));
@@ -173,7 +175,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   const smaLog = [{
     date: sm0[0],
     state, action: 'START',
-    price: ul0, shares: shares.tqqq + shares.qqq5,  // leveraged-side share count
+    price: ul0, shares: shares.tqqq + shares.qld + shares.qqq5 + shares.sso + shares.spxl,  // leveraged-side share count
     stockVal: totalAt(sm0) - cash, cash, total: totalAt(sm0),
     invested: initial,
   }];
@@ -259,7 +261,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (flippedAction) {
       smaLog.push({
         date: mDate, state, action: flippedAction,
-        price: ulP, shares: shares.tqqq + shares.qqq5,
+        price: ulP, shares: shares.tqqq + shares.qld + shares.qqq5 + shares.sso + shares.spxl,
         stockVal: totalAt(row) - cash,
         cash, total: totalAt(row),
         invested: totalInvested,
@@ -423,7 +425,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const fastMonthly = (qData === periodData || (period === 'quarterly' && qData === quarterlyData)) && monthsInPeriod && (period !== 'quarterly' || monthlyByQuarter);
   const monthsLookup = (period === 'quarterly') ? monthlyByQuarter : monthsInPeriod;
   const qSlice = qData.slice(entryIdx, exitIdx + 1);
-  if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], spyPoints: [], qqq5Points: [], totalContributed: initial };
+  if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], spyPoints: [], qldPoints: [], qqq5Points: [], ssoPoints: [], spxlPoints: [], totalContributed: initial };
 
   // Initial allocation: stockPct in the leveraged ETF, cashPct in cash. The
   // canonical 9Sig is 60/40 (stockPct=0.6, cashPct=0.4) — the user picks via
@@ -623,7 +625,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     prevQDate = qDate;
   }
 
-  if (skipBH) return { log, samplePoints, totalContributed: totalInvested, qqq5Points: [] };
+  if (skipBH) return { log, samplePoints, totalContributed: totalInvested, qldPoints: [], qqq5Points: [], ssoPoints: [], spxlPoints: [] };
 
   // Buy & hold for one asset column. Quarterly `points` (unchanged) plus, when
   // sampleQuarterly is on, quarter-end value snapshots so a yearly-grain run can
@@ -667,12 +669,15 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const bh   = buyHold(1, false); // TQQQ (always col 1, regardless of the strategy's underlying)
   const qqq  = buyHold(2, false);
   const spy  = buyHold(3, true);
+  const qld  = buyHold(4, true);
   const qqq5 = buyHold(5, true);
+  const sso  = buyHold(6, true);
+  const spxl = buyHold(7, true);
 
   return {
     log, samplePoints,
-    bhPoints: bh.points, qqqPoints: qqq.points, spyPoints: spy.points, qqq5Points: qqq5.points,
-    bhSample: bh.sample, qqqSample: qqq.sample, spySample: spy.sample, qqq5Sample: qqq5.sample,
+    bhPoints: bh.points, qqqPoints: qqq.points, spyPoints: spy.points, qldPoints: qld.points, qqq5Points: qqq5.points, ssoPoints: sso.points, spxlPoints: spxl.points,
+    bhSample: bh.sample, qqqSample: qqq.sample, spySample: spy.sample, qldSample: qld.sample, qqq5Sample: qqq5.sample, ssoSample: sso.sample, spxlSample: spxl.sample,
     totalContributed: totalInvested,
   };
 }

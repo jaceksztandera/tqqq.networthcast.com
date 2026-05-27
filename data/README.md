@@ -1,14 +1,15 @@
-# Long-history TQQQ, QQQ, SPY, SOXX, SOXL, and QQQ5 price data (+ short-rate reference data)
+# Long-history TQQQ, QLD, QQQ, SPY, SSO, SPXL, and QQQ5 price data (+ short-rate reference data)
 
-This folder contains daily closing-price series for **TQQQ, QQQ, SPY, SOXX, SOXL, and QQQ5** stretching back **decades before any of these ETFs actually existed**, along with the **historical short-term interest rate series** the synthesis methodology depends on. They power the [Strategies Simulator](https://9sig.networthcast.com), and they're published here so anyone can grab them and run their own backtests without reinventing the synthesis work.
+This folder contains daily closing-price series for **TQQQ, QLD, QQQ, SPY, SSO, SPXL, and QQQ5** stretching back **decades before any of these ETFs actually existed**, along with the **historical short-term interest rate series** the synthesis methodology depends on. They power the [Strategies Simulator](https://9sig.networthcast.com), and they're published here so anyone can grab them and run their own backtests without reinventing the synthesis work.
 
 ## ETF launch dates
 
 - **SPY** — January 1993
 - **QQQ** — March 1999
-- **SOXX** (1× semiconductors) — July 2001; underlying `^SOX` index began December 1993
+- **SSO** (2× S&P 500, ProShares Ultra S&P500) — June 2006
+- **QLD** (2× Nasdaq-100, ProShares Ultra QQQ) — June 2006
+- **SPXL** (3× S&P 500, Direxion Daily S&P500 Bull 3x) — November 2008
 - **TQQQ** (3× Nasdaq-100) — February 2010
-- **SOXL** (3× semiconductors) — March 2010
 - **QQQ5** (5× Nasdaq-100 ETP, Leverage Shares, LSE) — December 2021
 
 Pre-launch history is reconstructed from longer-lived indexes (Nasdaq-100, S&P 500, PHLX Semiconductor), using the same daily formulas the ETFs themselves use (leverage, expense ratios, financing costs on the borrowed leg, swap-counterparty spreads), and stitched onto the real series at each ETF's launch day.
@@ -20,10 +21,11 @@ The result is a continuous "what it would have looked like" series for each fund
 | File | Real history starts | Synthesized portion |
 | --- | --- | --- |
 | **synthetic-qqq.tsv** | March 10, 1999 — when QQQ launched. From here on it's real, dividend-adjusted Yahoo Finance data. | Before 1999 the series is built from the Nasdaq-100 index (`^NDX`), minus QQQ's tiny expense ratio. No financing-cost adjustment (QQQ is not leveraged). |
+| **synthetic-qld.tsv** | June 21, 2006 — when QLD (ProShares Ultra QQQ, 2×) launched. | Pre-2006 uses `(1 + 2 × NDX_daily − 1 × (short_rate + 0.50%)/yr − 0.95%/yr expense)`. 1999–2006 uses derived NDX-TR; 1938–1999 falls back to price-only `^NDX`. |
 | **synthetic-tqqq.tsv** | February 11, 2010 — when TQQQ launched. | Pre-2010 uses a leveraged-ETF formula that **includes the financing cost and a swap-counterparty spread**: `(1 + 3 × NDX_daily − 2 × (short_rate + 0.65%)/yr − 0.88%/yr expense)`. For 1999–2010 the underlying is the derived NDX-TR series (real Nasdaq movement plus actual dividends); for 1938–1999 it falls back to price-only `^NDX` because dividend data isn't available that far back. |
 | **spy.tsv** | January 29, 1993 — when SPY launched. | 1988–1993 uses the real S&P 500 Total Return index. 1985–1988 falls back to the plain S&P 500 (`^GSPC`) because total-return data isn't available that far back. No financing-cost adjustment (SPY is not leveraged). |
-| **synthetic-soxx.tsv** | July 13, 2001 — when SOXX launched. | Pre-2001 uses `^SOX` (PHLX Semiconductor index) minus SOXX's 0.35% expense ratio. The `^SOX` index itself only starts December 1993, so that's the floor for any semiconductor backtest. No financing-cost adjustment (SOXX is not leveraged). |
-| **synthetic-soxl.tsv** | March 11, 2010 — when SOXL launched. | Pre-2010 uses `(1 + 3 × SOX_daily − 2 × (short_rate + 0.50%)/yr − 0.75%/yr expense)`. 2001–2010 uses derived SOX-TR via `^SOX × SOXX_adj/SOXX_raw`; 1993–2001 falls back to price-only `^SOX`. Same December-1993 floor as SOXX. |
+| **synthetic-sso.tsv** | June 21, 2006 — when SSO (ProShares Ultra S&P500, 2×) launched. | Pre-2006 uses `(1 + 2 × SP500_daily − 1 × (short_rate + 0.50%)/yr − 0.87%/yr expense)`. 1988–2006 uses real `^SP500TR`; 1985–1988 falls back to price-only `^GSPC` (S&P dividend gap ~1.8%/yr understated). |
+| **synthetic-spxl.tsv** | November 5, 2008 — when SPXL (Direxion Daily S&P500 Bull 3x) launched. | Pre-2008 uses `(1 + 3 × SP500_daily − 2 × (short_rate + 0.50%)/yr − 0.95%/yr expense)`. 1988–2008 uses real `^SP500TR`; 1985–1988 falls back to price-only `^GSPC`. |
 | **synthetic-qqq5.tsv** | December 10, 2021 — when the Leverage Shares 5× ETP launched on LSE (yfinance ticker `QQQ5.L`, USD). | Pre-2021 uses `(1 + 5 × NDX_daily − 4 × (short_rate + 2.50%)/yr − 0.75%/yr expense)`. 1999–2021 uses derived NDX-TR; 1938–1999 uses price-only `^NDX`. The larger swap spread (2.50% vs 0.50–0.65% for 3× products) is empirically calibrated and matches the issuer's published PRIIPs cost disclosure — see audit notes below. |
 | **fed-funds-effective.tsv** | Daily, July 1, 1954 → present. | None — pulled from FRED series `DFF`. Used by the synthesis to compute the financing cost on the leveraged leg from 1954 onward. |
 | **t-bill-3mo.tsv** | Monthly, January 1934 → present. | None — pulled from FRED series `TB3MS`. Used as the pre-Fed-Funds-market (1934–1953) short-rate proxy. |
@@ -52,16 +54,18 @@ Pre-2010 backtests done without this correction are **wildly optimistic** in any
 
 The financing-cost model says the leveraged ETF pays **Fed Funds × (L−1)** on its borrowed leg. Reality is dirtier: the swap counterparty doesn't lend at Fed Funds — they lend at **Fed Funds + a spread** that covers their risk premium and desk margin. This spread is:
 
-- Small for mature, deep-liquidity 3× products (TQQQ, SOXL)
+- Small for mature, deep-liquidity products (QLD, SSO, TQQQ, SPXL)
 - Large for exotic high-leverage products (QQQ5)
 
 Each product's spread is **calibrated empirically** by regressing the naive (no-spread) synthesis against real ETF data and finding the spread that closes the residual gap to ≈ 0 over the full window:
 
 | ETF | Leverage | TER (mgmt fee) | Calibrated spread | Window used | Full-window residual |
 |---|---|---|---|---|---|
-| **TQQQ** | 3× | 0.88 % | **0.65 %/yr** | 2010–present (15+yr) | ~1.3 pp/yr → ≈ 0 with spread |
-| **SOXL** | 3× | 0.75 % | **0.50 %/yr** | 2010–present (16 yr) | +0.0 pp/yr |
-| **QQQ5** | 5× | 0.75 % | **2.50 %/yr** | 2021-12-10 → present | +0.2 pp/yr |
+| **QLD**  | 2× (NDX) | 0.95 % | **0.50 %/yr** | 2006–present (uncalibrated estimate) | not yet regressed |
+| **SSO**  | 2× (SPX) | 0.87 % | **0.50 %/yr** | 2006–present (uncalibrated estimate) | not yet regressed |
+| **TQQQ** | 3× (NDX) | 0.88 % | **0.65 %/yr** | 2010–present (15+yr) | ~1.3 pp/yr → ≈ 0 with spread |
+| **SPXL** | 3× (SPX) | 0.95 % | **0.50 %/yr** | 2008–present (uncalibrated estimate) | not yet regressed |
+| **QQQ5** | 5× (NDX) | 0.75 % | **2.50 %/yr** | 2021-12-10 → present | +0.2 pp/yr |
 
 The 5× product's spread is roughly 4× the 3× products' spread. That's consistent with how swap dealers price counterparty risk: 5× single-index daily-reset swaps have a smaller liquidity pool, larger gap risk on tail days, and command a much higher premium. Apply your own judgment to whether that calibrated 2.5 % held constant pre-2021 — swap markets didn't even exist pre-1980s, so deep-past values are necessarily forward-extrapolated.
 
@@ -95,7 +99,7 @@ After applying the financing-cost correction, the remaining known biases are:
 
 1. **Missing dividends pre-1999.** For pre-1999 QQQ and TQQQ we have only `^NDX` (price-only) — Yahoo lists `^XNDX` (NDX Total Return) but serves no history for it; NASDAQ.com's API, NASDAQ Data Link, Stooq, Tiingo, EODHD, and Alpha Vantage all gate it. Pre-1999 synth QQQ understates by ~0.7 %/year; pre-1999 synth TQQQ understates by ~2 %/year (= 3 × dividend yield).
 
-2. **Swap-counterparty spread** (modeled, calibrated above): TQQQ 0.65 %/yr, SOXL 0.50 %/yr, QQQ5 2.50 %/yr added to the financing rate for the borrowed leg. Closes most of what was previously the "~1.3 %/year unmodeled operational residual" for TQQQ.
+2. **Swap-counterparty spread** (modeled, calibrated above): QLD 0.50 %/yr, SSO 0.50 %/yr, TQQQ 0.65 %/yr, SPXL 0.50 %/yr, QQQ5 2.50 %/yr added to the financing rate for the borrowed leg. Closes most of what was previously the "~1.3 %/year unmodeled operational residual" for TQQQ.
 
 3. **Residual operational drag** (still not modeled): NAV-vs-market price deviations and daily-rebalancing slippage. For 3× products this is ~0.3–0.5 %/yr. For 5× products (QQQ5) this is ~1 %/yr — measurable as the gap between our calibrated model and real QQQ5.
 
@@ -117,10 +121,11 @@ You can grab any of the files straight from GitHub at the URLs below. They're re
 | File | URL |
 | --- | --- |
 | QQQ  | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qqq.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qqq.tsv) |
+| QLD  | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qld.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qld.tsv) |
 | TQQQ | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-tqqq.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-tqqq.tsv) |
 | SPY  | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/spy.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/spy.tsv) |
-| SOXX | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-soxx.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-soxx.tsv) |
-| SOXL | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-soxl.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-soxl.tsv) |
+| SSO  | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-sso.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-sso.tsv) |
+| SPXL | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-spxl.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-spxl.tsv) |
 | QQQ5 | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qqq5.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/synthetic-qqq5.tsv) |
 | Fed Funds Effective Rate (daily, 1954+) | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/fed-funds-effective.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/fed-funds-effective.tsv) |
 | 3-month T-bill (monthly, 1934+) | [https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/t-bill-3mo.tsv](https://raw.githubusercontent.com/bumbeishvili/9sig.networthcast.com/refs/heads/main/data/t-bill-3mo.tsv) |

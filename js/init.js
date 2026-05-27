@@ -1,17 +1,17 @@
 // Initialize: load CSV, derive data, set slider max, restore state, render
 (async function init() {
-  let QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY;
+  let QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY, QLD_DAILY, SSO_DAILY, SPXL_DAILY;
   try {
-    [QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY] = await Promise.all([
-      loadQQQDaily(), loadTQQQDaily(), loadSPYDaily(), loadQQQ5Daily(),
+    [QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY, QLD_DAILY, SSO_DAILY, SPXL_DAILY] = await Promise.all([
+      loadQQQDaily(), loadTQQQDaily(), loadSPYDaily(), loadQQQ5Daily(), loadQLDDaily(), loadSSODaily(), loadSPXLDaily(),
     ]);
   } catch(e) {
     console.error('Failed to load data:', e);
     return;
   }
-  daily = buildDaily(QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY);
-  quarterlyData = lastOfPeriod(daily, getQuarter).map(d => [d.date, d.tqqq, d.qqq, d.spy, d._unused, d.qqq5]);
-  monthlyData = lastOfPeriod(daily, getMonth).map(d => [d.date, d.tqqq, d.qqq, d.spy, d._unused, d.qqq5]);
+  daily = buildDaily(QQQ_DAILY, TQQQ_DAILY, SPY_DAILY, QQQ5_DAILY, QLD_DAILY, SSO_DAILY, SPXL_DAILY);
+  quarterlyData = lastOfPeriod(daily, getQuarter).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl]);
+  monthlyData = lastOfPeriod(daily, getMonth).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl]);
   dailyDateToIdx = new Map(daily.map((d, i) => [d.date, i]));
   // Pre-index monthly entries per quarter so simulate()'s hot inner loops
   // become O(2-3) lookups instead of O(monthlyData.length) scans.

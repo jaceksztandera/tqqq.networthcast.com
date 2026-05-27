@@ -8,7 +8,7 @@ const LS_KEY = '9sig-sliders';
 // nuking storage silently; the user clicks it when they're ready to load
 // the new defaults. If they've never visited before (no stored version),
 // we just record the current one without prompting.
-const APP_VERSION = 15; // bumped when SMA gained out-asset, DCA-in/out ladders, and bodyguard rules
+const APP_VERSION = 22; // bumped when SSO (2x SPY) and SPXL (3x SPY) were added as underlyings
 // NOTE: when you change any js/*.js or styles.css, also bump the matching ?v=
 // cache-bust query on the <script>/<link> tags in index.html (keep it equal to
 // APP_VERSION) so returning browsers fetch the new files instead of stale cache.

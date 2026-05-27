@@ -17,8 +17,8 @@ global.computeMaxDrawdown = function (s) {
 
 const MONTHS = ['2020-01-31','2020-02-29','2020-03-31','2020-04-30','2020-05-31','2020-06-30','2020-07-31','2020-08-31','2020-09-30','2020-10-31','2020-11-30','2020-12-31','2021-01-31','2021-02-28','2021-03-31','2021-04-30','2021-05-31','2021-06-30','2021-07-31','2021-08-31','2021-09-30','2021-10-31','2021-11-30','2021-12-31'];
 const QENDS = new Set(['2020-03-31','2020-06-30','2020-09-30','2020-12-31','2021-03-31','2021-06-30','2021-09-30','2021-12-31']);
-function install(prices) { // prices: 24 monthly numbers (tqqq=qqq=spy=qqq5)
-  const md = MONTHS.map((d, i) => [d, prices[i], prices[i], prices[i], 0, prices[i]]);
+function install(prices) { // prices: 24 monthly numbers (tqqq=qqq=spy=qld=qqq5=sso=spxl)
+  const md = MONTHS.map((d, i) => [d, prices[i], prices[i], prices[i], prices[i], prices[i], prices[i], prices[i]]);
   global.monthlyData = md;
   global.quarterlyData = md.filter(r => QENDS.has(r[0]));
   global.periodDataByName = null; global.monthsInPeriodByName = null; global.monthlyByQuarter = null;
@@ -114,6 +114,25 @@ ck('SMA always-in + dcaInMonths=12 → still doubles (seed bypasses ladder)',
 // So aboveBy = (200/1 - 1)*100 = 19900% → trivially > any threshold → bgGtfo trips immediately.
 ck('SMA always-in + bgGtfo=30 → forced to cash, no doubling',
    simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 1, bgGtfoPct: 30 }).smaPoints.at(-1).value < 1100);
+
+// QLD as underlying (col 4) — when prices double the holding doubles.
+// The synthetic install() fills every column with the same price array, so
+// underlyingCol:4 (QLD) on dblP behaves identically to underlyingCol:1 (TQQQ).
+install(dblP); global.smaAtMonthlyByKey = { 'qqq_200': new Array(24).fill(1) };
+ck('SMA always-in, underlyingCol=4 (QLD), doubling → 2000',
+   approx(simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 4 }).smaPoints.at(-1).value, 2000));
+ck('9sig with underlyingCol=4 (QLD): qldPoints present + doubles',
+   approx(simulate(1000, 0, 0, 0, last, 0, { qGrowth: 0.09, underlyingCol: 4 }).qldPoints.at(-1).value, 2000));
+
+// SSO (col 6, 2× S&P) and SPXL (col 7, 3× S&P) as underlyings.
+ck('SMA always-in, underlyingCol=6 (SSO), doubling → 2000',
+   approx(simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 6 }).smaPoints.at(-1).value, 2000));
+ck('SMA always-in, underlyingCol=7 (SPXL), doubling → 2000',
+   approx(simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 7 }).smaPoints.at(-1).value, 2000));
+ck('9sig with underlyingCol=6 (SSO): ssoPoints present + doubles',
+   approx(simulate(1000, 0, 0, 0, last, 0, { qGrowth: 0.09, underlyingCol: 6 }).ssoPoints.at(-1).value, 2000));
+ck('9sig with underlyingCol=7 (SPXL): spxlPoints present + doubles',
+   approx(simulate(1000, 0, 0, 0, last, 0, { qGrowth: 0.09, underlyingCol: 7 }).spxlPoints.at(-1).value, 2000));
 
 // ----- #1 signal growth is LITERAL per rebalance period -----
 install(flat);

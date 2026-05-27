@@ -20,7 +20,7 @@
   //            (no per-option resim), so no `apply` is needed.
   const PREVIEW_SELECTS = {
     'select-9sig-cash':       { kind: '9sig', apply: (p, v) => { p.cashPct = (+v || 0) / 100; } },
-    'select-9sig-underlying': { kind: '9sig', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : 1; } },
+    'select-9sig-underlying': { kind: '9sig', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
     'select-9sig-cashrate':   { kind: '9sig', apply: (p, v) => { p.cashRate = (+v || 0) / 100; } },
     'select-9sig-period':     { kind: '9sig', apply: (p, v) => { p.rebalancePeriod = v; } },
     'select-9sig-growth':     { kind: '9sig', apply: (p, v) => { p.qGrowth = (+v || 0) / 100; } },
@@ -29,7 +29,7 @@
     'select-9sig-spike':      { kind: '9sig', apply: (p, v) => { p.spikeTriggerPct = +v; } },
     'select-9sig-buypower':   { kind: '9sig', apply: (p, v) => { p.buyThrottlePct = +v; } },
     'select-bh-underlying':   { kind: 'bh' },
-    'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : 1; } },
+    'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
     'select-sma-asset':       { kind: 'sma', apply: (p, v) => { p.smaAsset = v; } },
     'select-sma-window':      { kind: 'sma', apply: (p, v) => { p.smaWindow = +v; } },
     'select-sma-cashrate':    { kind: 'sma', apply: (p, v) => { p.cashRate = (+v || 0) / 100; } },
@@ -70,7 +70,7 @@
     return Object.assign(readBaseParams(), {
       baselineRate:  sliderToRate(+document.getElementById('slider-rate').value) / 100,
       cashRate:      _num('select-9sig-cashrate', 0) / 100,
-      underlyingCol: _str('select-9sig-underlying', 'tqqq') === 'qqq5' ? 5 : 1,
+      underlyingCol: (function () { const v = _str('select-9sig-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
       qGrowth:       _num('select-9sig-growth', 9) / 100,
       crashDropPct:  _num('select-9sig-crashdrop', 30),
       crashLookbackMonths: _num('select-9sig-crashwin', 24),
@@ -86,7 +86,7 @@
   function readSmaParams() {
     return Object.assign(readBaseParams(), {
       cashRate:      _num('select-sma-cashrate', 0) / 100,
-      underlyingCol: _str('select-sma-underlying', 'tqqq') === 'qqq5' ? 5 : 1,
+      underlyingCol: (function () { const v = _str('select-sma-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
       smaAsset:      _str('select-sma-asset', 'qqq'),
       smaWindow:     _num('select-sma-window', 200),
       entryBufferPct: _num('select-sma-entry-buf', 0),
@@ -130,7 +130,7 @@
       buyThrottlePct: p.buyThrottlePct, baselineRate: p.baselineRate,
     });
     const lastVal = (arr) => (arr && arr.length) ? arr[arr.length - 1].value : 0;
-    return { tqqq: lastVal(r.bhPoints), qqq: lastVal(r.qqqPoints), spy: lastVal(r.spyPoints), qqq5: lastVal(r.qqq5Points) };
+    return { tqqq: lastVal(r.bhPoints), qqq: lastVal(r.qqqPoints), spy: lastVal(r.spyPoints), qld: lastVal(r.qldPoints), qqq5: lastVal(r.qqq5Points), sso: lastVal(r.ssoPoints), spxl: lastVal(r.spxlPoints) };
   }
 
   // Final values for every option of `select`, by its preview kind.

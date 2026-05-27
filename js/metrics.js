@@ -88,7 +88,7 @@ function moneyWeightedCAGR(initial, monthly, annualRaise, startDate, endDate, ye
 // crashes that the rebalance-grain `total` series cannot show.
 //   controls:  [{ date, shares, cash }]  sorted ascending by date
 //   dailyRows: [{ date, [priceKey]:Number, ... }]  e.g. the global `daily`
-//   priceKey:  daily field to revalue against ('tqqq'|'qqq'|'spy'|'qqq5')
+//   priceKey:  daily field to revalue against ('tqqq'|'qqq'|'spy'|'qld'|'qqq5'|'sso'|'spxl')
 function computeDailyMaxDrawdown(controls, dailyRows, priceKey) {
   if (!controls || !controls.length || !dailyRows || !dailyRows.length) return 0;
   const startDate = controls[0].date;

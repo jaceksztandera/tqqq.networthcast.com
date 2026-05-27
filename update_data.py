@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Fetches daily closing prices for QQQ, TQQQ, SPY, SOXX, SOXL, and QQQ5 (the
-Leverage Shares 5× Long Nasdaq 100 ETP on LSE, yfinance ticker `QQQ5.L`)
-from Yahoo Finance and short-term interest rates from FRED, then writes
-them as TSV files consumed by index.html.
+Fetches daily closing prices for QQQ, QLD, TQQQ, SPY, SSO, SPXL, and QQQ5
+(the Leverage Shares 5× Long Nasdaq 100 ETP on LSE, yfinance ticker `QQQ5.L`)
+from Yahoo Finance and short-term interest rates from FRED, then writes them
+as TSV files consumed by index.html.
 
 Pre-IPO history is fabricated by walking actual daily index values backward
 from each ETF's first real trading day, applying the leveraged-return-minus-
@@ -22,10 +22,7 @@ Sources used:
   ^NDX  base series   ← local ^ndx_d.csv (Stooq, back to 1938-01-03)
                           merged with yfinance ^NDX from 1985-10-01 (overrides
                           the CSV on overlapping dates)
-  ^SOX  base series   ← yfinance (PHLX Semiconductor Sector, from 1993-12-01;
-                          index didn't exist before then, so no deeper history
-                          is available without constituent-level reconstruction)
-  ^GSPC, ^SP500TR, QQQ, TQQQ, SPY, SOXX, SOXL, QQQ5.L, QQQ-raw, SOXX-raw  ← yfinance
+  ^GSPC, ^SP500TR, QQQ, QLD, TQQQ, SPY, SSO, SPXL, QQQ5.L, QQQ-raw  ← yfinance
   DFF  (daily 1954+)  ← FRED  — Fed Funds Effective Rate, the swap-counterparty
                                 financing reference for leveraged ETFs
   TB3MS (monthly 1934+) ← FRED — 3-month T-bill, used as the pre-1954 proxy
@@ -33,20 +30,22 @@ Sources used:
 Synthesis formulas:
 
   QQQ  pre-1999       ← extended ^NDX                (1× − QQQ expense)
+  QLD  pre-1999       ← extended ^NDX                (2× − 1×rate − QLD exp)
+  QLD  1999 → 2006    ← derived NDX-TR               (2× − 1×rate − QLD exp)
   TQQQ pre-1999       ← extended ^NDX                (3× − 2×rate − TQQQ exp)
   TQQQ 1999 → 2010    ← derived NDX-TR               (3× − 2×rate − TQQQ exp)
                         = ^NDX × QQQ_adj / QQQ_raw
   SPY  pre-1988       ← ^GSPC, clipped to NDX start  (1× − SPY expense)
   SPY  1988 → 1993    ← ^SP500TR                     (1× − SPY expense)
-  SOXX pre-2001       ← ^SOX                         (1× − SOXX expense)
-  SOXL pre-2001       ← ^SOX                         (3× − 2×rate − SOXL exp)
-  SOXL 2001 → 2010    ← derived SOX-TR               (3× − 2×rate − SOXL exp)
-                        = ^SOX × SOXX_adj / SOXX_raw
+  SSO  pre-1988       ← ^GSPC                        (2× − 1×rate − SSO exp)
+  SSO  1988 → 2006    ← ^SP500TR                     (2× − 1×rate − SSO exp)
+  SPXL pre-1988       ← ^GSPC                        (3× − 2×rate − SPXL exp)
+  SPXL 1988 → 2008    ← ^SP500TR                     (3× − 2×rate − SPXL exp)
   QQQ5 pre-1999       ← extended ^NDX                (5× − 4×rate − QQQ5 exp)
   QQQ5 1999 → 2021    ← derived NDX-TR               (5× − 4×rate − QQQ5 exp)
 
-QQQ, SPY, and SOXX have leverage 1, so (L-1) × rate = 0 — no financing-cost
-term. TQQQ, SOXL, and QQQ5 get the rate correction.
+QQQ and SPY have leverage 1, so (L-1) × rate = 0 — no financing-cost term.
+QLD, TQQQ, SSO, SPXL, and QQQ5 get the rate correction.
 
 The local ^ndx_d.csv extends pre-1985 history. The actual NASDAQ-100 index
 didn't exist before 1985-01-31, so values before that are a back-reconstruction
@@ -96,22 +95,32 @@ except ImportError:
 basedir = os.path.dirname(os.path.abspath(__file__))
 
 QQQ_EXPENSE_DAILY  = 0.0020   / 252  # 0.20%   annual
+QLD_EXPENSE_DAILY  = 0.0095   / 252  # 0.95%   annual (ProShares Ultra QQQ, 2×)
 TQQQ_EXPENSE_DAILY = 0.0088   / 252  # 0.88%   annual
 SPY_EXPENSE_DAILY  = 0.000945 / 252  # 0.0945% annual
-SOXX_EXPENSE_DAILY = 0.0035   / 252  # 0.35%   annual (iShares Semiconductor)
-SOXL_EXPENSE_DAILY = 0.0075   / 252  # 0.75%   annual (Direxion 3× Semi Bull, gross TER)
+SSO_EXPENSE_DAILY  = 0.0087   / 252  # 0.87%   annual (ProShares Ultra S&P500, 2×)
+SPXL_EXPENSE_DAILY = 0.0095   / 252  # 0.95%   annual (Direxion Daily S&P500 Bull 3×)
 # === Swap-spread calibration ==============================================
 # Real leveraged ETFs pay their swap counterparty something HIGHER than the
 # bare Fed Funds rate. The spread reflects counterparty risk premium, swap
 # desk margin, and product-specific friction. Empirically calibrated by
 # regressing real (yfinance) returns against the naive (L × index − (L-1)×DFF
 # − TER) prediction:
+#   QLD  (2×): 0.50%/yr   — uncalibrated estimate; ProShares-standard 2× is
+#                            the most liquid leverage tier, tighter swap pricing
+#                            than 3×. Refine via regression once a few years of
+#                            real data have been logged against the naive synth.
+#   SSO  (2× S&P): 0.50%/yr — uncalibrated estimate; SPY swaps are the deepest
+#                            equity-swap market, so we mirror QLD's 2× spread.
 #   TQQQ (3×): 0.65%/yr   — original code's residual 1.3 pp/yr ÷ 2
-#   SOXL (3×): 0.50%/yr   — 16-year fit; residual ≈ 0
+#   SPXL (3× S&P): 0.50%/yr — uncalibrated estimate; SPY 3× swaps are tighter
+#                            than QQQ-based 3× because S&P swaps are deeper.
 #   QQQ5 (5×): 2.50%/yr   — 4.4-year fit; matches Leverage Shares' PRIIPs KID
 #                            disclosure of 0.0267%/day mgmt+admin (~9.75%/yr)
-TQQQ_SWAP_SPREAD = 0.0065
-SOXL_SWAP_SPREAD = 0.005
+QLD_SWAP_SPREAD   = 0.005
+SSO_SWAP_SPREAD   = 0.005
+TQQQ_SWAP_SPREAD  = 0.0065
+SPXL_SWAP_SPREAD  = 0.005
 QQQ5_EXPENSE_DAILY = 0.0075   / 252  # 0.75%   annual — Leverage Shares' published TER
                                      # for the 5× Long Nasdaq 100 ETP (QQQ5.L).
 QQQ5_SWAP_SPREAD   = 0.025           # 2.5%/yr swap-counterparty spread over the
@@ -141,10 +150,11 @@ DATA_DIR = 'data'
 
 tickers = [
     ('QQQ',    'synthetic-qqq.tsv'),
+    ('QLD',    'synthetic-qld.tsv'),
     ('TQQQ',   'synthetic-tqqq.tsv'),
     ('SPY',    'spy.tsv'),
-    ('SOXX',   'synthetic-soxx.tsv'),
-    ('SOXL',   'synthetic-soxl.tsv'),
+    ('SSO',    'synthetic-sso.tsv'),
+    ('SPXL',   'synthetic-spxl.tsv'),
     ('QQQ5.L', 'synthetic-qqq5.tsv'),
 ]
 
@@ -509,20 +519,18 @@ if not _args.rebuild:
 # ETF's first real trading day.
 qqq_df          = fetch('QQQ')                              # auto-adjusted (TR)
 qqq_raw_df      = fetch('QQQ', auto_adjust=False)           # split-adjusted only
+qld_df          = fetch('QLD')                              # ProShares 2× QQQ, 2006-06-21+
 tqqq_df         = fetch('TQQQ')
 spy_df          = fetch('SPY')
-soxx_df         = fetch('SOXX')                             # auto-adjusted (TR)
-soxx_raw_df     = fetch('SOXX', auto_adjust=False)          # split-adjusted only
-soxl_df         = fetch('SOXL')
+sso_df          = fetch('SSO')                              # ProShares 2× S&P500, 2006-06-21+
+spxl_df         = fetch('SPXL')                             # Direxion 3× S&P500, 2008-11-05+
 qqq5_df         = fetch('QQQ5.L')                           # Leverage Shares 5× QQQ ETP (LSE), 2021-12-10+
 ndx_df          = fetch('^NDX')
-sox_df          = fetch('^SOX')                             # PHLX Semiconductor, from 1993-12-01
 gspc_df         = fetch('^GSPC')
 sp500tr_df      = fetch('^SP500TR')
 
 ndx_pairs       = extend_with_csv(df_to_pairs(ndx_df), read_ndx_csv())
 qqq_pairs       = df_to_pairs(qqq_df)                       # = QQQ_adj
-sox_pairs       = df_to_pairs(sox_df)
 sp500tr_pairs   = df_to_pairs(sp500tr_df)
 ndx_start       = ndx_pairs[0][0] if ndx_pairs else df_to_pairs(ndx_df)[0][0]
 gspc_clipped    = [(d, c) for d, c in df_to_pairs(gspc_df) if d >= ndx_start]
@@ -544,18 +552,6 @@ ndx_tr_pairs = []
 for d in sorted(qqq_adj_map):
     if d in ndx_map and d in qqq_raw_map and qqq_raw_map[d] > 0:
         ndx_tr_pairs.append((d, ndx_map[d] * qqq_adj_map[d] / qqq_raw_map[d]))
-
-# Same trick for SOX-TR: ^SOX × SOXX_adj / SOXX_raw, from SOXX's 2001 inception.
-# Valid only while SOXX tracked ^SOX (pre-2021 reindex); we only consume it for
-# the 2001 → 2010 phase of the SOXL synthesis, so post-2021 mismatch is moot.
-sox_map      = dict(sox_pairs)
-soxx_adj_map = {d: cell(row['Adj Close']) for d, row in soxx_raw_df.iterrows()}
-soxx_raw_map = {d: cell(row['Close'])     for d, row in soxx_raw_df.iterrows()}
-sox_tr_pairs = []
-for d in sorted(soxx_adj_map):
-    if d in sox_map and d in soxx_raw_map and soxx_raw_map[d] > 0:
-        sox_tr_pairs.append((d, sox_map[d] * soxx_adj_map[d] / soxx_raw_map[d]))
-
 
 # ---- QQQ pre-1999 (single phase, ^NDX) ----
 qqq_prefix_rows, _ = walk_backward(
@@ -598,6 +594,31 @@ if phase1_pairs:
     tqqq_prefix_rows = phase2_rows + phase1_rows
 else:
     tqqq_prefix_rows = phase1_rows
+
+
+# ---- QLD: real ProShares 2× QQQ from 2006-06-21, synthesized prefix ----
+# Mirrors the TQQQ two-phase chain but with leverage=2, expense=0.95%/yr,
+# and ~half the swap spread (2× swaps are the most liquid leverage tier).
+qld_phase1_rows, qld_phase1_pairs = walk_backward(
+    ndx_tr_pairs,
+    anchor_date=qld_df.index[0],
+    anchor_price=cell(qld_df['Close'].iloc[0]),
+    leverage=2,
+    expense_daily=QLD_EXPENSE_DAILY,
+    rate_map=rate_map,
+    rate_spread=QLD_SWAP_SPREAD,
+)
+if qld_phase1_pairs:
+    qld_p2_d, qld_p2_p = qld_phase1_pairs[0]
+    qld_phase2_rows, _ = walk_backward(
+        ndx_pairs, qld_p2_d, qld_p2_p,
+        leverage=2, expense_daily=QLD_EXPENSE_DAILY,
+        rate_map=rate_map,
+        rate_spread=QLD_SWAP_SPREAD,
+    )
+    qld_prefix_rows = qld_phase2_rows + qld_phase1_rows
+else:
+    qld_prefix_rows = qld_phase1_rows
 
 
 # ---- QQQ5: real Leverage Shares 5× QQQ from 2021-12-10, synthesized prefix ----
@@ -653,51 +674,63 @@ else:
     spy_prefix_rows = spy_phase1_rows
 
 
-# ---- SOXX pre-2001 (single phase, ^SOX) ----
-# ^SOX is price-only (PHLX Semiconductor is not a TR index), so pre-2001 SOXX
-# understates by ~SOXX dividend yield. Semi sector yields are low (~1%/yr).
-soxx_prefix_rows, _ = walk_backward(
-    sox_pairs,
-    anchor_date=soxx_df.index[0],
-    anchor_price=cell(soxx_df['Close'].iloc[0]),
-    leverage=1,
-    expense_daily=SOXX_EXPENSE_DAILY,
-)
-
-
-# ---- SOXL: two-phase, mirrors TQQQ ----
-# Phase 1: 2001 → 2010, walk through derived SOX-TR (^SOX × SOXX_adj/SOXX_raw)
-# so the SOXX expense cancels, leaving a clean total-return daily series.
-# rate_map gives the (L-1)×rate financing-cost correction for 3× leverage.
-soxl_phase1_rows, soxl_phase1_pairs = walk_backward(
-    sox_tr_pairs,
-    anchor_date=soxl_df.index[0],
-    anchor_price=cell(soxl_df['Close'].iloc[0]),
-    leverage=3,
-    expense_daily=SOXL_EXPENSE_DAILY,
+# ---- SSO: real ProShares 2× S&P500 from 2006-06-21, synthesized prefix ----
+# Mirrors QLD's two-phase chain but on the S&P 500. Phase 1 walks back through
+# ^SP500TR (real S&P total-return index, 1988+); phase 2 falls back to ^GSPC
+# (price-only, ~1.8%/yr understated for missing dividends, but the only signal
+# we have pre-1988).
+sso_phase1_rows, sso_phase1_pairs = walk_backward(
+    sp500tr_pairs,
+    anchor_date=sso_df.index[0],
+    anchor_price=cell(sso_df['Close'].iloc[0]),
+    leverage=2,
+    expense_daily=SSO_EXPENSE_DAILY,
     rate_map=rate_map,
-    rate_spread=SOXL_SWAP_SPREAD,
+    rate_spread=SSO_SWAP_SPREAD,
 )
-# Phase 2: pre-2001, walk through ^SOX directly. Price-only bias is
-# ~3×semi_yield ≈ -3%/yr understated; ^SOX itself only starts 1993-12-01.
-if soxl_phase1_pairs:
-    sx2_anchor_date, sx2_anchor_price = soxl_phase1_pairs[0]
-    soxl_phase2_rows, _ = walk_backward(
-        sox_pairs, sx2_anchor_date, sx2_anchor_price,
-        leverage=3, expense_daily=SOXL_EXPENSE_DAILY,
+if sso_phase1_pairs:
+    sso_p2_d, sso_p2_p = sso_phase1_pairs[0]
+    sso_phase2_rows, _ = walk_backward(
+        gspc_clipped, sso_p2_d, sso_p2_p,
+        leverage=2, expense_daily=SSO_EXPENSE_DAILY,
         rate_map=rate_map,
-        rate_spread=SOXL_SWAP_SPREAD,
+        rate_spread=SSO_SWAP_SPREAD,
     )
-    soxl_prefix_rows = soxl_phase2_rows + soxl_phase1_rows
+    sso_prefix_rows = sso_phase2_rows + sso_phase1_rows
 else:
-    soxl_prefix_rows = soxl_phase1_rows
+    sso_prefix_rows = sso_phase1_rows
 
 
-prefix_by_ticker = {'QQQ': qqq_prefix_rows, 'TQQQ': tqqq_prefix_rows, 'SPY': spy_prefix_rows,
-                    'SOXX': soxx_prefix_rows, 'SOXL': soxl_prefix_rows,
+# ---- SPXL: real Direxion 3× S&P500 from 2008-11-05, synthesized prefix ----
+# Same shape as SSO but leverage=3 and a higher financing-cost burden.
+spxl_phase1_rows, spxl_phase1_pairs = walk_backward(
+    sp500tr_pairs,
+    anchor_date=spxl_df.index[0],
+    anchor_price=cell(spxl_df['Close'].iloc[0]),
+    leverage=3,
+    expense_daily=SPXL_EXPENSE_DAILY,
+    rate_map=rate_map,
+    rate_spread=SPXL_SWAP_SPREAD,
+)
+if spxl_phase1_pairs:
+    spxl_p2_d, spxl_p2_p = spxl_phase1_pairs[0]
+    spxl_phase2_rows, _ = walk_backward(
+        gspc_clipped, spxl_p2_d, spxl_p2_p,
+        leverage=3, expense_daily=SPXL_EXPENSE_DAILY,
+        rate_map=rate_map,
+        rate_spread=SPXL_SWAP_SPREAD,
+    )
+    spxl_prefix_rows = spxl_phase2_rows + spxl_phase1_rows
+else:
+    spxl_prefix_rows = spxl_phase1_rows
+
+
+prefix_by_ticker = {'QQQ': qqq_prefix_rows, 'QLD': qld_prefix_rows,
+                    'TQQQ': tqqq_prefix_rows, 'SPY': spy_prefix_rows,
+                    'SSO': sso_prefix_rows, 'SPXL': spxl_prefix_rows,
                     'QQQ5.L': qqq5_prefix_rows}
-real_by_ticker   = {'QQQ': qqq_df, 'TQQQ': tqqq_df, 'SPY': spy_df,
-                    'SOXX': soxx_df, 'SOXL': soxl_df,
+real_by_ticker   = {'QQQ': qqq_df, 'QLD': qld_df, 'TQQQ': tqqq_df, 'SPY': spy_df,
+                    'SSO': sso_df, 'SPXL': spxl_df,
                     'QQQ5.L': qqq5_df}
 
 data_dir = os.path.join(basedir, DATA_DIR)
