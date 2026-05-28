@@ -823,7 +823,7 @@ function render() {
   // strategy). Restored just before the panel/legends are rebuilt below.
   if (typeof freezeBaseForEditing === 'function') freezeBaseForEditing();
   const initial = sliderToInitial(+document.getElementById('slider-initial').value);
-  const monthly = +document.getElementById('slider-monthly').value;
+  const monthly = sliderToMonthly(+document.getElementById('slider-monthly').value);
   const annualRaise = +document.getElementById('slider-raise').value / 100;
   // `rate` is the Invested Compounded baseline rate (the slider in that
   // sidebar). 9sig and SMA each have their own parked-cash rate now.
@@ -1760,4 +1760,3 @@ function render() {
 
   if (typeof refreshAnalytics === 'function') refreshAnalytics();
 }
-
