@@ -40,7 +40,7 @@
   // the recipient can't accidentally wipe + reload away the shared params.
   const isSharedLink = params.get('v') !== null;
   if (typeof migrateSharedLink === 'function') migrateSharedLink(params);
-  const urlMap = { i: 'slider-initial', m: 'slider-monthly', a: 'slider-raise', r: 'slider-rate', e: 'slider-entry', x: 'slider-exit' };
+  const urlMap = { i: 'slider-initial', m: 'slider-monthly', a: 'slider-raise', r: 'slider-rate', tx: 'slider-tax', e: 'slider-entry', x: 'slider-exit' };
   let hasUrlParams = false;
   for (const [key, sliderId] of Object.entries(urlMap)) {
     const val = params.get(key);
@@ -53,9 +53,18 @@
       hasUrlParams = true;
     }
   }
+  if (params.get('ta') !== null) {
+    document.getElementById('checkbox-taxable').checked = params.get('ta') === '1';
+    hasUrlParams = true;
+  }
 
   // Buy & Hold underlying
   if (params.get('bu') !== null) { document.getElementById('select-bh-underlying').value = params.get('bu'); hasUrlParams = true; }
+  // Fixed Split
+  if (params.get('fs') !== null) { document.getElementById('select-fixed-stock').value      = params.get('fs'); hasUrlParams = true; }
+  if (params.get('fu') !== null) { document.getElementById('select-fixed-underlying').value = params.get('fu'); hasUrlParams = true; }
+  if (params.get('fp') !== null) { document.getElementById('select-fixed-period').value     = params.get('fp'); hasUrlParams = true; }
+  if (params.get('fr') !== null) { document.getElementById('select-fixed-cashrate').value   = params.get('fr'); hasUrlParams = true; }
   // SMA strategy params
   if (params.get('sa')  !== null) { document.getElementById('select-sma-asset').value       = params.get('sa');  hasUrlParams = true; }
   if (params.get('sw')  !== null) { document.getElementById('select-sma-window').value      = params.get('sw');  hasUrlParams = true; }
@@ -135,6 +144,7 @@
   // analytics modal before first render (e.g. URL ?ng=15 → "15sig").
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans      === 'function') update9sigCashSpans();
+  if (typeof updateFixedCashSpan      === 'function') updateFixedCashSpan();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   // Don't offer the localStorage "reset saved data" prompt when viewing a
   // shared link — clicking it would reload to a clean URL and lose the link.
