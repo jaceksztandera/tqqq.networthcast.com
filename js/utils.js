@@ -57,6 +57,14 @@ function initialToSlider(v) {
   return Math.round(((logVal - minLog) / (maxLog - minLog)) * 1000);
 }
 
+function sliderToMonthly(s) {
+  return sliderToInitial(s);
+}
+
+function monthlyToSlider(v) {
+  return initialToSlider(v);
+}
+
 // Quadratic-curve mapping for the cash-interest-rate slider: slider position
 // 0–1000 maps to rate 0–100 %. The squared curve packs fine resolution into
 // the realistic 0–10 % range (where most users live) while the upper third
@@ -122,4 +130,3 @@ function makeLetterBadge(letter, color) {
 }
 const switchIcon9sig = makeLetterBadge('9', '#22d3ee');
 const switchIconTqqq = makeLetterBadge('T', '#f87171');
-

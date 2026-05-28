@@ -13,6 +13,7 @@ let _logData = null;
 const LEGEND_ORDER = [
   0,  // 9sig
   8,  // SMA
+  13, // Fixed Split
   2,  // Buy & Hold — dataset 2's label + data swap based on
       // #select-bh-underlying (TQQQ / QQQ / SPY / QQQ5).
   7,  // Invested Compounded
@@ -181,6 +182,8 @@ function buildSmaLogTableHtml(smaLog) {
       <td>${l.state.toUpperCase()}</td>
       <td>${fmtLogPrice(l.price)}</td>
       <td>${fmtLogShares(l.shares)}</td>
+      <td>${fmtGainCell(l.realizedGain)}</td>
+      <td>${fmtTaxCell(l.taxPaid)}</td>
       <td>${fmtFull(Math.round(l.stockVal))}</td>
       <td>${fmtFull(Math.round(l.cash))}</td>
       <td>${fmtFull(Math.round(l.total))}</td>
@@ -201,6 +204,8 @@ function buildSmaLogTableHtml(smaLog) {
             <th>State</th>
             <th>${ulName} Price</th>
             <th>${ulName} Shares</th>
+            <th>Realized Gain</th>
+            <th>Tax</th>
             <th>Stock Val</th>
             <th>Cash</th>
             <th>Total</th>
@@ -228,6 +233,12 @@ function fmtLogShares(n) {
   if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
   if (n >= 1)   return n.toFixed(2);
   return n.toFixed(4);
+}
+function fmtTaxCell(v) {
+  return Number.isFinite(v) && v > 0.5 ? fmtFull(Math.round(v)) : '—';
+}
+function fmtGainCell(v) {
+  return Number.isFinite(v) && Math.abs(v) > 0.5 ? fmtFull(Math.round(v)) : '—';
 }
 
 // Tooltip shown on a log's last (current-period) row. That period hasn't
@@ -326,6 +337,8 @@ function buildLogTableHtml(d) {
       <td>${fmtShares(shares)}</td>
       <td>${fmtFull(Math.round(l.tqqqVal))}</td>
       <td style="color:#fb923c">${fmtFull(Math.round(l.target))}</td>
+      <td>${fmtGainCell(l.realizedGain)}</td>
+      <td>${fmtTaxCell(l.taxPaid)}</td>
       <td>${fmtFull(Math.round(l.cash))}</td>
       <td>${fmtFull(Math.round(l.total))}</td>
       <td class="${ac} log-action">${l.action}</td>
@@ -344,6 +357,8 @@ function buildLogTableHtml(d) {
             <th>${ulName} Shares</th>
             <th>${ulName} Val</th>
             <th>Target</th>
+            <th>Realized Gain</th>
+            <th>Tax</th>
             <th>Cash</th>
             <th>Total Portfolio</th>
             <th class="log-action">Action</th>
@@ -353,6 +368,43 @@ function buildLogTableHtml(d) {
       </table>
     </div>
   `;
+}
+
+function buildFixedLogTableHtml(rows) {
+  if (!rows || !rows.length) return '';
+  const ulName = ((document.getElementById('select-fixed-underlying') || {}).value || 'tqqq').toUpperCase();
+  const nm = newMoneyPerPeriod(rows);
+  const lastIdx = rows.length - 1;
+  const body = rows.map((l, i) => {
+    const ac = l.action.startsWith('SELL') ? 'action-sell' : l.action.startsWith('BUY') ? 'action-buy' : 'action-hold';
+    return `<tr${i === lastIdx ? ' class="log-latest"' : ''}>
+      <td>${fmtLogDate(l.date)}</td>
+      <td>${i === 0 ? 'Initial' : 'Rebalance'}${latestBadge(i === lastIdx)}</td>
+      <td>${nm[i] > 0 ? fmtFull(Math.round(nm[i])) : '—'}</td>
+      <td>${fmtLogPrice(l.price)}</td>
+      <td>${fmtLogShares(l.shares)}</td>
+      <td>${fmtFull(Math.round(l.stockVal))}</td>
+      <td>${fmtGainCell(l.realizedGain)}</td>
+      <td>${fmtTaxCell(l.taxPaid)}</td>
+      <td>${fmtFull(Math.round(l.cash))}</td>
+      <td>${fmtFull(Math.round(l.total))}</td>
+      <td class="${ac} log-action">${l.action}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="strategy-panel-section-label" style="margin-top:24px">Rebalance Log</div>
+    <div class="quarter-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Type</th><th>New $</th><th>${ulName} Price</th>
+            <th>${ulName} Shares</th><th>${ulName} Val</th><th>Realized Gain</th>
+            <th>Tax</th><th>Cash</th><th>Total Portfolio</th><th class="log-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
 }
 
 // Render the 4-stat grid (CAGR / Start / End / Max DD) for one dataset idx.
@@ -407,6 +459,7 @@ const PANEL_LIVE_CONTROLS = {
   2: ['bh-controls'],                        // Buy & Hold sidebar: underlying selector (consolidated chip)
   7: ['invested-controls'],                  // Invested Compounded sidebar: the cash interest-rate slider
   8: ['sma-controls'],                       // SMA sidebar: asset + window + underlying selectors
+  13: ['fixed-controls'],                    // Fixed Split sidebar: allocation, underlying, cadence, cash rate
 };
 const ALL_LIVE_CONTROL_IDS = Array.from(
   new Set(Object.values(PANEL_LIVE_CONTROLS).flat())
@@ -521,6 +574,9 @@ function renderStrategyPanelBody(idx) {
   if (idx === 8 && _logData && _logData.smaLog) {
     html += buildSmaLogTableHtml(_logData.smaLog);
   }
+  if (idx === 13 && _logData && _logData.fixedLog) {
+    html += buildFixedLogTableHtml(_logData.fixedLog);
+  }
   body.innerHTML = html;
   // Re-attach live control nodes for this idx (if any). Configuration
   // controls live at the TOP of the panel — above stats/rules/log — so they
@@ -615,8 +671,8 @@ function attemptCloseStrategyPanel() {
 // Stable keys for the openable strategy panels, so a share link can capture
 // which sidebar was open without depending on dataset indices (which shift
 // between versions). Used by shareConfig (controls.js) + restore (init.js).
-const PANEL_KEY_BY_IDX = { 0: '9sig', 2: 'bh', 7: 'invested', 8: 'sma' };
-const PANEL_IDX_BY_KEY = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8 };
+const PANEL_KEY_BY_IDX = { 0: '9sig', 2: 'bh', 7: 'invested', 8: 'sma', 13: 'fixed' };
+const PANEL_IDX_BY_KEY = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8, 'fixed': 13 };
 function getOpenPanelKey() {
   return (_currentPanelIdx != null) ? (PANEL_KEY_BY_IDX[_currentPanelIdx] || null) : null;
 }
@@ -656,16 +712,21 @@ function _finerPeriod(a, b) {
   if (!b) return a;
   return (_PERIOD_RANK[a] ?? 2) <= (_PERIOD_RANK[b] ?? 2) ? a : b;
 }
-function chartDisplayPeriod(livePeriod) {
+function chartDisplayPeriod(livePeriod, liveFixedPeriod) {
   let p = null;
   // Main 9sig line: its period is the live (draft) period when we're editing the
   // main, or canonical quarterly when a saved strategy is being edited.
   const mainVisible = chart ? chart.isDatasetVisible(0) : false;
   if (mainVisible) p = window._editingConfigId ? 'quarterly' : livePeriod;
+  const fixedVisible = chart ? chart.isDatasetVisible(13) : false;
+  if (fixedVisible) p = _finerPeriod(p, window._editingConfigId ? 'quarterly' : (liveFixedPeriod || 'quarterly'));
   if (typeof getSavedConfigs === 'function') {
     for (const c of getSavedConfigs()) {
       if (c.type === '9sig' && !c.hidden) {
         p = _finerPeriod(p, (c.params && c.params['select-9sig-period']) || 'quarterly');
+      }
+      if (c.type === 'fixed' && !c.hidden) {
+        p = _finerPeriod(p, (c.params && c.params['select-fixed-period']) || 'quarterly');
       }
     }
   }
@@ -812,18 +873,20 @@ function render() {
   // them to canonical); chartPeriod() below picks the finest grain among visible
   // 9sig strategies so the axis stays stable and represents them all.
   const _livePeriod = ((document.getElementById('select-9sig-period') || {}).value) || 'quarterly';
+  const _liveFixedPeriod = ((document.getElementById('select-fixed-period') || {}).value) || 'quarterly';
   // …then freeze the base line of the edited type to its canonical defaults so
   // the fixed top pill doesn't track the controls (which now belong to the saved
   // strategy). Restored just before the panel/legends are rebuilt below.
   if (typeof freezeBaseForEditing === 'function') freezeBaseForEditing();
   const initial = sliderToInitial(+document.getElementById('slider-initial').value);
-  const monthly = +document.getElementById('slider-monthly').value;
+  const monthly = sliderToMonthly(+document.getElementById('slider-monthly').value);
   const annualRaise = +document.getElementById('slider-raise').value / 100;
   // `rate` is the Invested Compounded baseline rate (the slider in that
   // sidebar). 9sig and SMA each have their own parked-cash rate now.
   const rate = sliderToRate(+document.getElementById('slider-rate').value) / 100;
   const nineSigCashRate = (+((document.getElementById('select-9sig-cashrate') || {}).value) || 0) / 100;
   const smaCashRate     = (+((document.getElementById('select-sma-cashrate')  || {}).value) || 0) / 100;
+  const fixedCashRate   = (+((document.getElementById('select-fixed-cashrate') || {}).value) || 0) / 100;
   const logScale = document.getElementById('chart-log-toggle').getAttribute('aria-pressed') === 'true';
   let entryIdx = +document.getElementById('slider-entry').value;
   let exitIdx = +document.getElementById('slider-exit').value;
@@ -862,6 +925,11 @@ function render() {
 
   document.getElementById('disp-initial').textContent = fmtFull(initial);
   document.getElementById('disp-monthly').textContent = fmtFull(monthly);
+  const taxable = !!((document.getElementById('checkbox-taxable') || {}).checked);
+  const taxDisp = document.getElementById('disp-tax');
+  if (taxDisp) taxDisp.textContent = (((document.getElementById('slider-tax') || {}).value) || 0) + '%';
+  const taxSlider = document.getElementById('slider-tax');
+  if (taxSlider) taxSlider.disabled = !taxable;
   // Annual increase is now a dropdown that shows its own value — no separate display.
   const _dispRaise = document.getElementById('disp-raise');
   if (_dispRaise) { const raiseVal = annualRaise * 100; _dispRaise.textContent = (raiseVal % 1 === 0 ? raiseVal.toFixed(0) : raiseVal.toFixed(1)) + '%'; }
@@ -881,6 +949,8 @@ function render() {
   };
   const sigUlCol = ulSel('select-9sig-underlying');
   const smaUlCol = ulSel('select-sma-underlying');
+  const fixedUlCol = ulSel('select-fixed-underlying');
+  const taxRate = taxable ? ((+((document.getElementById('slider-tax') || {}).value) || 0) / 100) : 0;
   const qGrowth  = +((document.getElementById('select-9sig-growth') || {}).value) / 100 || 0.09;
   const crashDropPct  = +((document.getElementById('select-9sig-crashdrop') || {}).value);
   const crashLookbackMonths = +((document.getElementById('select-9sig-crashwin') || {}).value) || 24;
@@ -894,7 +964,7 @@ function render() {
   //     Used only for the shared x-axis so no visible strategy loses detail; a
   //     coarser line is step-resampled onto it (identity when the grains match).
   const mainPeriod   = window._editingConfigId ? 'quarterly' : _livePeriod;
-  const displayGrain = chartDisplayPeriod(_livePeriod);
+  const displayGrain = chartDisplayPeriod(_livePeriod, _liveFixedPeriod);
   const cashPct = (+((document.getElementById('select-9sig-cash') || {}).value) || 0) / 100;
   // Checkbox: ticked → deploy half of each contribution into stock immediately
   // at the month's price, rest waits for rebalance. Off → canonical 9sig.
@@ -905,6 +975,7 @@ function render() {
   const sigOpts = {
     qGrowth,
     underlyingCol: sigUlCol,
+    taxRate,
     crashDropPct:   Number.isFinite(crashDropPct) ? crashDropPct : 30,
     crashLookbackMonths,
     spikeTriggerPct: Number.isFinite(spikeTrigPct) ? spikeTrigPct : 100,
@@ -956,6 +1027,7 @@ function render() {
   const smaWindow = +((document.getElementById('select-sma-window') || {}).value) || 200;
   const smaOpts = {
     smaAsset, smaWindow, underlyingCol: smaUlCol,
+    taxRate,
     entryBufferPct:       +((document.getElementById('select-sma-entry-buf') || {}).value) || 0,
     exitBufferPct:        +((document.getElementById('select-sma-exit-buf')  || {}).value) || 0,
     rsiOverheatThreshold: +((document.getElementById('select-sma-rsi-oh')   || {}).value) || 0,
@@ -967,6 +1039,16 @@ function render() {
     bgGtfoPct:      +((document.getElementById('select-sma-bg-gtfo')     || {}).value) || 0,
   };
   const { smaPoints, smaLog } = simulateSMA(initial, monthly, smaCashRate, simEntryIdx, exitIdx, annualRaise, smaOpts);
+  const fixedStockPct = +((document.getElementById('select-fixed-stock') || {}).value) || 75;
+  const fixedPeriod = ((document.getElementById('select-fixed-period') || {}).value) || 'quarterly';
+  const fixedSim = simulateFixedSplit(initial, monthly, fixedCashRate, simEntryIdx, exitIdx, annualRaise, {
+    underlyingCol: fixedUlCol,
+    taxRate,
+    stockPct: fixedStockPct,
+    rebalancePeriod: fixedPeriod,
+  });
+  const fixedLog = fixedSim.log || [];
+  const fixedPoints = fixedSim.fixedPoints || [];
 
   // The base envelope is the MAIN 9sig line's own alternate runs, gated by its own
   // session flag — independent of any saved strategy's envelope. Visibility is
@@ -1000,6 +1082,7 @@ function render() {
         skipBH: true,
         qGrowth,
         underlyingCol: sigUlCol,
+        taxRate,
         crashDropPct:   Number.isFinite(crashDropPct) ? crashDropPct : 30,
         crashLookbackMonths,
         spikeTriggerPct: Number.isFinite(spikeTrigPct) ? spikeTrigPct : 100,
@@ -1030,6 +1113,7 @@ function render() {
   const finalSSO  = ssoPoints  && ssoPoints.length  ? ssoPoints[ssoPoints.length - 1].value   : 0;
   const finalSPXL = spxlPoints && spxlPoints.length ? spxlPoints[spxlPoints.length - 1].value : 0;
   const finalSMA  = smaPoints  && smaPoints.length  ? smaPoints[smaPoints.length - 1].value   : 0;
+  const finalFixed = fixedPoints && fixedPoints.length ? fixedPoints[fixedPoints.length - 1].value : 0;
   const years = log.length > 1 ? (new Date(log[log.length-1].date) - new Date(log[0].date)) / (365.25*86400000) : 1;
   // Simple end/start growth — kept for the sub-series fallback (their CAGR is the
   // annualized growth of their own balance, not a contribution-based return).
@@ -1050,6 +1134,7 @@ function render() {
   const retSSO  = _mw(finalSSO);
   const retSPXL = _mw(finalSPXL);
   const retSMA  = _mw(finalSMA);
+  const retFixed = _mw(finalFixed);
   const retInv = _mw(finalLog.investedCompounded);
 
   // Consolidated Buy & Hold chip (dataset 2) — picks one of the four B&H
@@ -1074,6 +1159,7 @@ function render() {
   // sidebar selectors instead.
   const LBL_9SIG = '9sig';
   const LBL_SMA  = 'SMA';
+  const LBL_FIXED = 'Fixed Split';
   // Buy & Hold spells out the underlying it's actually holding (default TQQQ →
   // "Buy & Hold TQQQ"; follows #select-bh-underlying when switched).
   const LBL_BH   = 'Buy & Hold ' + bhKey.toUpperCase();
@@ -1087,6 +1173,7 @@ function render() {
     2: bhPicked.ret,
     7: retInv,
     8: retSMA,
+    13: retFixed,
   };
 
   // Chart. Series come from the display points (quarter snapshots for a yearly
@@ -1114,6 +1201,7 @@ function render() {
   });
   const smaD  = smaAligned.map(p => p ? p.value : null);
   const smaStates = smaAligned.map(p => p ? p.state : null);
+  const fixedD = resampleByDate((fixedPoints || []).map(p => ({ date: p.date, value: p.value })), labels);
   const invD = onLabels(sigPts, l => l.investedCompounded);
   const targetD = onLabels(sigPts, l => l.target);
   // Data fed into the consolidated B&H slot (dataset 2) — display points for the
@@ -1129,6 +1217,7 @@ function render() {
   const seriesByIdx = {
     0: totalD, 1: tqqqValD, 2: bhActiveD,
     5: targetD, 6: cashD, 7: invD, 8: smaD,
+    13: fixedD,
   };
   const mainCagrIdx = window._cagrByDatasetIdx;
   // #3 Daily-sampled drawdown: revalue each holding at every daily close
@@ -1154,6 +1243,10 @@ function render() {
       dailyDDByIdx[8] = computeDailyMaxDrawdown(
         smaLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[smaUlCol] || 'qqq') * 100;
     }
+    if (fixedLog && fixedLog.length) {
+      dailyDDByIdx[13] = computeDailyMaxDrawdown(
+        fixedLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[fixedUlCol] || 'tqqq') * 100;
+    }
   }
   window._strategyMetrics = {};
   for (const [idxStr, series] of Object.entries(seriesByIdx)) {
@@ -1173,7 +1266,7 @@ function render() {
   }
   // Shared context for saved-config lines (saved-configs.js). They reuse the
   // global initial/monthly/date-range; only their own strategy knobs are frozen.
-  const cfgCtx = { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels, years, totalContributed };
+  const cfgCtx = { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels, years, totalContributed, taxRate };
   if (chart) {
     // Strip saved-config datasets up front so the envelope length math below
     // (which assumes datasets end at the envelope block) stays correct.
@@ -1187,10 +1280,12 @@ function render() {
     chart.data.datasets[6].label = '9sig Cash';
     chart.data.datasets[7].label = LBL_INV;
     chart.data.datasets[8].label = LBL_SMA;
+    chart.data.datasets[13].label = LBL_FIXED;
     chart.data.datasets[0].data = totalD;
     chart.data.datasets[1].data = tqqqValD;
     chart.data.datasets[2].data = bhActiveD;
-    // Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QQQ5), 10 (B&H QLD) are kept
+    // Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QQQ5), 10 (B&H QLD), 11 (B&H SSO),
+    // and 12 (B&H SPXL) are kept
     // zeroed and hidden — dataset 2 above serves as the consolidated B&H slot now.
     chart.data.datasets[3].data = []; chart.data.datasets[3].hidden = true;
     chart.data.datasets[4].data = []; chart.data.datasets[4].hidden = true;
@@ -1203,8 +1298,9 @@ function render() {
     chart.data.datasets[10].data = []; chart.data.datasets[10].hidden = true;
     chart.data.datasets[11].data = []; chart.data.datasets[11].hidden = true;
     chart.data.datasets[12].data = []; chart.data.datasets[12].hidden = true;
-    while (chart.data.datasets.length < 13 + envelopeShiftCount) {
-      const offset = chart.data.datasets.length - 13;
+    chart.data.datasets[13].data = fixedD;
+    while (chart.data.datasets.length < 14 + envelopeShiftCount) {
+      const offset = chart.data.datasets.length - 14;
       chart.data.datasets.push({
         label: '_shift_' + (offset + 1),
         data: [],
@@ -1220,7 +1316,7 @@ function render() {
       });
     }
     for (let i = 0; i < envelopeShiftCount; i++) {
-      const ds9 = chart.data.datasets[13 + i];
+      const ds9 = chart.data.datasets[14 + i];
       ds9.data = showBaseEnvelope ? (shiftResults[i] || []) : [];
       ds9.borderColor = envColor;
       ds9.hidden = !showBaseEnvelope;
@@ -1254,8 +1350,9 @@ function render() {
   //  10  B&H QLD       cyan       #06b6d4
   //  11  B&H SSO       purple     #c084fc
   //  12  B&H SPXL      rose       #f43f5e
-  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#6366f1', '#06b6d4', '#c084fc', '#f43f5e'];
-  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QQQ5', 'B&H QLD', 'B&H SSO', 'B&H SPXL'];
+  //  13  Fixed Split   violet     #c084fc
+  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#6366f1', '#06b6d4', '#c084fc', '#f43f5e', '#c084fc'];
+  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QQQ5', 'B&H QLD', 'B&H SSO', 'B&H SPXL', LBL_FIXED];
   // Match the borderDash on the corresponding chart dataset; null = solid.
   //   2 B&H TQQQ   [6,3]       medium dash
   //   3 B&H QQQ    [8,4]       long dash
@@ -1264,7 +1361,7 @@ function render() {
   //  10 B&H QLD    [5,2,2,2]   dash-dot
   //  11 B&H SSO    [5,2,2,2]   dash-dot
   //  12 B&H SPXL   [5,2,2,2]   dash-dot
-  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2], [5,2,2,2]];
+  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2], [5,2,2,2], null];
 
   // Touch / coarse-pointer detection — once at chart creation time. On those
   // devices Chart.js's tap-to-show tooltip is followed by an immediate
@@ -1622,6 +1719,17 @@ function render() {
           borderDash: [5, 2, 2, 2],
           hidden: true,
         },
+        {
+          label: LBL_FIXED,
+          data: fixedD,
+          borderColor: '#c084fc',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          borderWidth: 2,
+        },
         ...Array.from({ length: envelopeShiftCount }, (_, i) => ({
           label: '_shift_' + (i + 1),
           data: showBaseEnvelope ? (shiftResults[i] || []) : [],
@@ -1705,7 +1813,7 @@ function render() {
   // Stash latest data for the side-panel log tables. Normally this is the
   // canonical base simulation; but when a saved strategy is open for editing the
   // panel describes THAT strategy, so swap in its (separately computed) sim.
-  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, smaLog };
+  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, smaLog, fixedLog };
   if (window._editingConfigId && window._editingConfigSim) {
     const cs = window._editingConfigSim;
     _logData = {
@@ -1718,6 +1826,7 @@ function render() {
       ssoPoints:  cs.ssoPoints  || ssoPoints,
       spxlPoints: cs.spxlPoints || spxlPoints,
       smaLog:     cs.smaLog     || smaLog,
+      fixedLog:   cs.fixedLog   || fixedLog,
     };
   }
 
@@ -1737,4 +1846,3 @@ function render() {
 
   if (typeof refreshAnalytics === 'function') refreshAnalytics();
 }
-

@@ -31,7 +31,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" defer></script>
-<link rel="stylesheet" href="styles.css?v=32">
+<link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
 
@@ -82,7 +82,18 @@
           <option value="25">25%</option>
         </select> /yr
       </label>
-      <input type="range" id="slider-monthly" min="0" max="100000" step="50" value="500">
+      <input type="range" id="slider-monthly" min="0" max="1000" step="1" value="117">
+    </div>
+
+    <div class="control-group">
+      <div class="mc-head">
+        <label>Income Tax on Realized Gains</label>
+        <span class="value-display" id="disp-tax">19%</span>
+      </div>
+      <label class="mc-raise" for="checkbox-taxable" title="Apply FIFO tax to realized gains on strategy sells">
+        <input type="checkbox" id="checkbox-taxable"> Taxable Account
+      </label>
+      <input type="range" id="slider-tax" min="0" max="50" step="1" value="19">
     </div>
 
     <!-- Build a strategy from pasted (e.g. LLM-written) code. -->
@@ -236,8 +247,9 @@
         <option value="2">2.0%</option>
         <option value="2.5">2.5%</option>
         <option value="3">3.0%</option>
+        <option value="3.14" selected>3.14%</option>
         <option value="3.5">3.5%</option>
-        <option value="4" selected>4.0%</option>
+        <option value="4">4.0%</option>
         <option value="4.5">4.5%</option>
         <option value="5">5.0%</option>
         <option value="5.5">5.5%</option>
@@ -597,6 +609,84 @@
   </div>
 </div>
 
+<div id="fixed-controls-host" hidden>
+  <div class="control-group" id="fixed-controls">
+    <div class="adaptive-line">
+      Keep
+      <select class="inline-select" id="select-fixed-stock">
+        <option value="0">0%</option>
+        <option value="10">10%</option>
+        <option value="20">20%</option>
+        <option value="25">25%</option>
+        <option value="30">30%</option>
+        <option value="40">40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="75" selected>75%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+        <option value="100">100%</option>
+      </select>
+      in
+      <select class="inline-select" id="select-fixed-underlying">
+        <option value="tqqq" selected>TQQQ</option>
+        <option value="qqq5">QQQ5</option>
+      </select>
+      and <span id="fixed-cash-pct">25%</span> in cash.
+    </div>
+    <div class="adaptive-line">
+      Rebalance
+      <select class="inline-select" id="select-fixed-period">
+        <option value="weekly">weekly</option>
+        <option value="monthly">monthly</option>
+        <option value="quarterly" selected>quarterly</option>
+        <option value="yearly">yearly</option>
+      </select>.
+    </div>
+    <div class="adaptive-line">
+      That cash earns
+      <select class="inline-select" id="select-fixed-cashrate">
+        <option value="0">0.0%</option>
+        <option value="0.5">0.5%</option>
+        <option value="1">1.0%</option>
+        <option value="1.5">1.5%</option>
+        <option value="2">2.0%</option>
+        <option value="2.5">2.5%</option>
+        <option value="3">3.0%</option>
+        <option value="3.14" selected>3.14%</option>
+        <option value="3.5">3.5%</option>
+        <option value="4">4.0%</option>
+        <option value="4.5">4.5%</option>
+        <option value="5">5.0%</option>
+        <option value="5.5">5.5%</option>
+        <option value="6">6.0%</option>
+        <option value="6.5">6.5%</option>
+        <option value="7">7.0%</option>
+        <option value="7.5">7.5%</option>
+        <option value="8">8.0%</option>
+        <option value="8.5">8.5%</option>
+        <option value="9">9.0%</option>
+        <option value="9.5">9.5%</option>
+        <option value="10">10.0%</option>
+        <option value="10.5">10.5%</option>
+        <option value="11">11.0%</option>
+        <option value="11.5">11.5%</option>
+        <option value="12">12.0%</option>
+        <option value="12.5">12.5%</option>
+        <option value="13">13.0%</option>
+        <option value="14">14.0%</option>
+        <option value="15">15.0%</option>
+        <option value="16">16.0%</option>
+        <option value="18">18.0%</option>
+        <option value="20">20.0%</option>
+      </select>
+      a year.
+      <span class="info-icon" tabindex="0" data-tip="Annual interest the Fixed Split strategy's cash side earns between contribution dates and rebalances. Independent of the other strategy cash rates.">ⓘ</span>
+    </div>
+  </div>
+</div>
+
 <div id="sma-controls-host" hidden>
   <div class="control-group" id="sma-controls">
     <div class="wip-note">⚠ The SMA strategy is a work in progress — its results may still change.</div>
@@ -674,8 +764,9 @@
         <option value="2">2.0%</option>
         <option value="2.5">2.5%</option>
         <option value="3">3.0%</option>
+        <option value="3.14" selected>3.14%</option>
         <option value="3.5">3.5%</option>
-        <option value="4" selected>4.0%</option>
+        <option value="4">4.0%</option>
         <option value="4.5">4.5%</option>
         <option value="5">5.0%</option>
         <option value="5.5">5.5%</option>
@@ -776,16 +867,16 @@
      returning browsers fetch the new files instead of serving stale cached
      copies (a stale JS file against fresh HTML throws null-element errors).
      Keep this in sync with APP_VERSION in controls.js. -->
-<script src="js/data.js?v=32"></script>
-<script src="js/utils.js?v=32"></script>
-<script src="js/simulate.js?v=32"></script>
-<script src="js/metrics.js?v=32"></script>
-<script src="js/chart.js?v=32"></script>
-<script src="js/controls.js?v=32"></script>
-<script src="js/analytics.js?v=32"></script>
-<script src="js/preview-dropdown.js?v=32"></script>
-<script src="js/saved-configs.js?v=32"></script>
-<script src="js/init.js?v=32"></script>
+<script src="js/data.js?v=33"></script>
+<script src="js/utils.js?v=33"></script>
+<script src="js/simulate.js?v=33"></script>
+<script src="js/metrics.js?v=33"></script>
+<script src="js/chart.js?v=33"></script>
+<script src="js/controls.js?v=33"></script>
+<script src="js/analytics.js?v=33"></script>
+<script src="js/preview-dropdown.js?v=33"></script>
+<script src="js/saved-configs.js?v=33"></script>
+<script src="js/init.js?v=33"></script>
 
 </body>
 </html>
