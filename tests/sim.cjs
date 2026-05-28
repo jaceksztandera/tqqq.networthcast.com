@@ -6,7 +6,26 @@
  *   node tests/sim.cjs
  */
 const fs = require('fs');
+const utils = fs.readFileSync(__dirname + '/../js/utils.js', 'utf8');
 const sim = fs.readFileSync(__dirname + '/../js/simulate.js', 'utf8');
+global.window = { devicePixelRatio: 1 };
+global.document = {
+  createElement: () => ({
+    width: 0,
+    height: 0,
+    getContext: () => ({
+      scale() {},
+      beginPath() {},
+      arc() {},
+      fill() {},
+      fillText() {},
+      set fillStyle(v) {},
+      set font(v) {},
+      set textAlign(v) {},
+      set textBaseline(v) {},
+    }),
+  }),
+};
 global.fmt = (n) => String(Math.round(n));
 global.computeMaxDrawdown = function (s, dates) {
   const empty = { pct: 0, peakIdx: -1, troughIdx: -1, peakDate: null, troughDate: null };
@@ -24,6 +43,7 @@ global.computeMaxDrawdown = function (s, dates) {
   const dateAt = (i) => (dates && i >= 0 && i < dates.length) ? dates[i] : null;
   return { pct: maxDD, peakIdx: bestPeakIdx, troughIdx: bestTroughIdx, peakDate: dateAt(bestPeakIdx), troughDate: dateAt(bestTroughIdx) };
 };
+(0, eval)(utils);
 
 const MONTHS = ['2020-01-31','2020-02-29','2020-03-31','2020-04-30','2020-05-31','2020-06-30','2020-07-31','2020-08-31','2020-09-30','2020-10-31','2020-11-30','2020-12-31','2021-01-31','2021-02-28','2021-03-31','2021-04-30','2021-05-31','2021-06-30','2021-07-31','2021-08-31','2021-09-30','2021-10-31','2021-11-30','2021-12-31'];
 const QENDS = new Set(['2020-03-31','2020-06-30','2020-09-30','2020-12-31','2021-03-31','2021-06-30','2021-09-30','2021-12-31']);
@@ -43,6 +63,11 @@ const A = []; let pass = true;
 const ck = (n, c, e) => { if (!c) { pass = false; A.push('  FAIL  ' + n + (e ? '   ' + e : '')); } else A.push('  ok    ' + n); };
 const approx = (a, b, tol) => Math.abs(a - b) <= (tol != null ? tol : 1e-6) * Math.max(1, Math.abs(b));
 const flat = new Array(24).fill(100), last = 7;
+
+// ----- slider mappings -----
+ck('Monthly slider uses initial-investment curve: position 0 maps to $0', sliderToMonthly(0) === 0);
+ck('Monthly slider uses initial-investment curve: position 333 maps near $10K', sliderToMonthly(333) === sliderToInitial(333));
+ck('Monthly slider round-trips a small contribution through dollar storage', sliderToMonthly(monthlyToSlider(500)) === 500);
 
 // ----- Buy & Hold -----
 install(flat);
@@ -74,6 +99,13 @@ r = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09, spikeTriggerPct: 0 });
 ck('9sig SELL: total conserved at pre-rebalance 1600', approx(r.log[1].total, 1600, 1e-6));
 ck('9sig SELL: action is a SELL', /SELL/.test(r.log[1].action), r.log[1].action);
 ck('9sig SELL: stock pulled down to signal (654)', approx(r.log[1].tqqqVal, 654, 1e-6));
+r = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09, spikeTriggerPct: 0, taxRate: 0 });
+ck('9sig tax off: sell proceeds are untaxed', approx(r.log[1].total, 1600, 1e-6));
+r = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09, spikeTriggerPct: 0, taxRate: 0.19 });
+ck('9sig tax: FIFO tax is paid only on realized sell gain',
+   approx(r.log[1].taxPaid, 51.87, 1e-4), 'tax ' + r.log[1].taxPaid);
+ck('9sig tax: sell proceeds added to cash net of tax',
+   approx(r.log[1].total, 1548.13, 1e-4), 'total ' + r.log[1].total);
 install(MONTHS.map((d, i) => i <= 2 ? 100 : 10));
 r = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09 });
 ck('9sig BUY throttle: keeps >= 10% cash dry', r.log[1].cash >= 40 - 1e-6, 'cash ' + r.log[1].cash);
@@ -92,6 +124,14 @@ ck('Invested Compounded matches manual compounding loop', approx(r.log.at(-1).in
 ck('Invested Compounded > totalContributed (interest accrues)', r.log.at(-1).investedCompounded > r.totalContributed);
 r = simulate(1000, 100, 0, 0, last, 0.10, {});
 ck('totalContributed honors annual raise (9*100 + 12*110)', r.totalContributed === 1000 + 9 * 100 + 12 * 110);
+install(flat);
+r = simulate(1000, 0, 0.12, 0, 1, 0, { qGrowth: 0, taxRate: 0.25 });
+ck('9sig cash interest tax: idle cash grows net of tax',
+   approx(r.log[1].cash, 400 * Math.pow(1.0075, 3), 1e-9),
+   'cash ' + r.log[1].cash);
+ck('9sig cash interest tax: taxPaid includes tax on cash interest',
+   approx(r.log[1].taxPaid, 3.02255625, 1e-9),
+   'tax ' + r.log[1].taxPaid);
 
 // ----- drawdown -----
 ck('drawdown [100,150,75,120] = 0.5', approx(computeMaxDrawdown([100, 150, 75, 120]).pct, 0.5));
@@ -121,6 +161,74 @@ global.smaAtMonthlyByKey = { 'qqq_200': new Array(24).fill(1e9) };
 ck('SMA always-out, 0 rate → stays 1000 (cash)', approx(simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 1 }).smaPoints.at(-1).value, 1000));
 install(dblP); global.smaAtMonthlyByKey = { 'qqq_200': new Array(24).fill(1) };
 ck('SMA always-in, doubling underlying → 2000', approx(simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 1 }).smaPoints.at(-1).value, 2000));
+global.smaAtMonthlyByKey = { 'qqq_200': MONTHS.map((d, i) => i <= 2 ? 1 : 1e9) };
+r = simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 1, taxRate: 0 });
+ck('SMA tax off: exit sell proceeds are untaxed', approx(r.smaLog.find(l => l.action === 'EXIT').total, 2000, 1e-6));
+r = simulateSMA(1000, 0, 0, 0, last, 0, { smaAsset: 'qqq', smaWindow: 200, underlyingCol: 1, taxRate: 0.19 });
+ck('SMA tax: FIFO tax is paid on exit sell gain',
+   approx(r.smaLog.find(l => l.action === 'EXIT').taxPaid, 190, 1e-6),
+   'tax ' + r.smaLog.find(l => l.action === 'EXIT').taxPaid);
+ck('SMA tax: exit proceeds are added to cash net of tax',
+   approx(r.smaLog.find(l => l.action === 'EXIT').total, 1810, 1e-6),
+   'total ' + r.smaLog.find(l => l.action === 'EXIT').total);
+
+// ----- Fixed Split -----
+function installPeriods(prices) {
+  install(prices);
+  global.monthlyByQuarter = quarterlyData.map(q => monthlyData.map((m, i) => [m[0], i]).filter(([d]) => d <= q[0] && (q === quarterlyData[0] || d > quarterlyData[quarterlyData.indexOf(q) - 1][0])).map(([, i]) => i));
+  global.periodDataByName = {
+    monthly: monthlyData,
+    quarterly: quarterlyData,
+    yearly: monthlyData.filter(r => r[0].endsWith('-12-31')),
+    weekly: MONTHS.flatMap((d, i) => {
+      const ym = d.substring(0, 8);
+      return [ym + '07', ym + '14', ym + '21', d].map(dd => [dd, prices[i], prices[i], prices[i], 0, prices[i]]);
+    }),
+  };
+  global.monthsInPeriodByName = null;
+}
+
+installPeriods(flat);
+r = simulateFixedSplit(1000, 0, 0, 0, last, 0, { stockPct: 75, rebalancePeriod: 'quarterly' });
+ck('Fixed Split flat: 75/25 preserves total with no contributions or interest',
+   r.log.every(l => approx(l.total, 1000, 1e-6)));
+ck('Fixed Split flat: starts with 75% stock / 25% cash',
+   approx(r.log[0].stockVal, 750, 1e-6) && approx(r.log[0].cash, 250, 1e-6));
+installPeriods(MONTHS.map((d, i) => i <= 2 ? 100 : 200));
+r = simulateFixedSplit(1000, 0, 0, 0, 1, 0, { stockPct: 75, rebalancePeriod: 'quarterly', taxRate: 0 });
+ck('Fixed Split rising: rebalance sells back to 75% stock',
+   /SELL/.test(r.log[1].action) && approx(r.log[1].stockVal / r.log[1].total, 0.75, 1e-6),
+   r.log[1].action + ' alloc ' + (r.log[1].stockVal / r.log[1].total));
+installPeriods(MONTHS.map((d, i) => i <= 2 ? 100 : 50));
+r = simulateFixedSplit(1000, 0, 0, 0, 1, 0, { stockPct: 75, rebalancePeriod: 'quarterly' });
+ck('Fixed Split falling: rebalance buys back to 75% stock',
+   /BUY/.test(r.log[1].action) && approx(r.log[1].stockVal / r.log[1].total, 0.75, 1e-6),
+   r.log[1].action + ' alloc ' + (r.log[1].stockVal / r.log[1].total));
+installPeriods(flat);
+r = simulateFixedSplit(1000, 100, 0, 0, 1, 0, { stockPct: 75, rebalancePeriod: 'quarterly' });
+ck('Fixed Split contributions: monthly deposits split immediately at target allocation',
+   approx(r.log[1].stockVal, 975, 1e-6) && approx(r.log[1].cash, 325, 1e-6),
+   'stock ' + r.log[1].stockVal + ' cash ' + r.log[1].cash);
+installPeriods(flat);
+r = simulateFixedSplit(1000, 0, 0.12, 0, 1, 0, { stockPct: 0, rebalancePeriod: 'quarterly', taxRate: 0.25 });
+ck('Fixed Split cash interest tax: cash side grows net of tax',
+   approx(r.log[1].cash, 1000 * Math.pow(1.0075, 3), 1e-9),
+   'cash ' + r.log[1].cash);
+ck('Fixed Split cash interest tax: taxPaid includes cash-interest tax',
+   approx(r.log[1].taxPaid, 7.556390625, 1e-9),
+   'tax ' + r.log[1].taxPaid);
+installPeriods(MONTHS.map((d, i) => i <= 2 ? 100 : 200));
+r = simulateFixedSplit(1000, 0, 0, 0, 1, 0, { stockPct: 75, rebalancePeriod: 'quarterly', taxRate: 0.19 });
+ck('Fixed Split tax: FIFO tax paid only on realized rebalance gain',
+   approx(r.log[1].taxPaid, 19.179004036777457, 1e-6), 'tax ' + r.log[1].taxPaid);
+ck('Fixed Split tax: target allocation is computed after tax drag',
+   approx(r.log[1].stockVal / r.log[1].total, 0.75, 1e-6), 'alloc ' + (r.log[1].stockVal / r.log[1].total));
+installPeriods(flat);
+const fixedCounts = ['weekly','monthly','quarterly','yearly'].map(p =>
+  simulateFixedSplit(1000, 0, 0, 0, last, 0, { stockPct: 75, rebalancePeriod: p }).log.length);
+ck('Fixed Split cadences: weekly/monthly/quarterly/yearly produce different rebalance counts and valid totals',
+   new Set(fixedCounts).size > 2 && fixedCounts.every(n => n > 1),
+   fixedCounts.join(','));
 
 // ----- SMA: out-asset, DCA ladders, bodyguard -----
 // SMA always-out + outAsset = qqq → fully invested in QQQ on price doubling.
