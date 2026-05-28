@@ -313,16 +313,22 @@ async function run() {
   await waitHeatmap();
 
   const pickers = await page.evaluate(() => {
-    const KEY2IDX = { '9sig': 0, 'bh-tqqq': 2, 'bh-qqq': 3, 'bh-spy': 4, 'sma': 8, 'bh-qqq5': 9 };
-    const c = window.Chart.getChart(document.getElementById('mainChart'));
     const stratSel = document.getElementById('analytics-strategy');
     const baseSel  = document.getElementById('analytics-baseline');
     const sentence = (document.getElementById('analytics-sentence') || {}).textContent || '';
-    // The "Visualize" dropdown's built-in options must match main-chart visibility.
+    // The "Visualize" dropdown always exposes every built-in, regardless of
+    // main-chart visibility — analytics runs its own sims and lets the user
+    // compare any pair without un-hiding chart lines first.
     const stratStrategiesGroup = stratSel.querySelector('optgroup[label="Strategies"]');
     const builtinOpts = stratStrategiesGroup ? [...stratStrategiesGroup.querySelectorAll('option')].map(o => o.value) : [];
-    const builtinMatch = Object.keys(KEY2IDX).every(k => builtinOpts.includes(k) === c.isDatasetVisible(KEY2IDX[k]));
-    const someBuiltinHidden = Object.keys(KEY2IDX).some(k => !builtinOpts.includes(k));
+    // Default builtins: 9sig, the active B&H (TQQQ by default), SMA — the
+    // three main-chart chips. The B&H entry tracks the chip's selector, so it
+    // becomes B&H QLD/SSO/SPXL/QQQ/SPY/QQQ5 if the user picks a different
+    // underlying. Compounded Cash + custom targets live in the baseline
+    // dropdown only.
+    const EXPECTED_BUILTINS = ['9sig', 'bh-tqqq', 'sma'];
+    const builtinAllPresent = EXPECTED_BUILTINS.every(k => builtinOpts.includes(k));
+    const noneMissingDespiteHidden = builtinOpts.length === EXPECTED_BUILTINS.length;
     const stratSavedGroup = stratSel.querySelector('optgroup[label="Saved"]');
     const baseSavedGroup  = baseSel.querySelector('optgroup[label="Saved"]');
     const baseCustomGroup = baseSel.querySelector('optgroup[label="Custom"]');
@@ -332,7 +338,7 @@ async function run() {
       sentenceOk: /Visualize/.test(sentence) && /vs performance of/.test(sentence) && /entry amount of/.test(sentence) && /monthly investment of/.test(sentence) && /increasing yearly by/.test(sentence),
       investInSentence,
       noSavedLabel: !document.querySelector('.analytics-strat-sep'),
-      builtinMatch, someBuiltinHidden,
+      builtinAllPresent, noneMissingDespiteHidden, builtinOpts,
       stratSavedOpts: stratSavedGroup ? stratSavedGroup.querySelectorAll('option').length : 0,
       baseGroups: [...baseSel.querySelectorAll('optgroup')].map(g => g.label),
       baseSavedOpts: baseSavedGroup ? baseSavedGroup.querySelectorAll('option').length : 0,
@@ -343,8 +349,8 @@ async function run() {
   ck('header reads as a sentence (Visualize … vs … with entry/monthly/raise)', pickers.sentenceOk, JSON.stringify(pickers));
   ck('investment dropdowns (initial/monthly/raise) are inline in the sentence', pickers.investInSentence);
   ck('the "SAVED" divider chip is gone', pickers.noSavedLabel);
-  ck('Visualize dropdown built-ins match main-chart visibility', pickers.builtinMatch, JSON.stringify(pickers));
-  ck('Visualize dropdown omits built-ins not visible on the main chart', pickers.someBuiltinHidden, JSON.stringify(pickers));
+  ck('Visualize dropdown lists every built-in (regardless of chart visibility)', pickers.builtinAllPresent, JSON.stringify(pickers.builtinOpts));
+  ck('Visualize dropdown has no extra builtins', pickers.noneMissingDespiteHidden, JSON.stringify(pickers.builtinOpts));
   ck('Visualize dropdown lists 3 saved strategies', pickers.stratSavedOpts === 3, 'saved=' + pickers.stratSavedOpts);
   ck('comparison dropdown: Baseline / Strategies / Saved / Custom optgroups', pickers.baseGroups.join(',') === 'Baseline,Strategies,Saved,Custom', pickers.baseGroups.join(','));
   ck('comparison dropdown: 3 saved options', pickers.baseSavedOpts === 3, 'savedOpts=' + pickers.baseSavedOpts);
@@ -446,7 +452,7 @@ async function run() {
   section('share-link strategies: not auto-saved, banner "Save" persists them');
   await fresh(page);
   const sc = [{ type: '9sig', name: 'Shared 9sig', params: { 'select-9sig-growth': '12' }, color: '#e879f9' }];
-  await page.goto(BASE + '/index.html?v=23&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/index.html?v=32&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
   await page.waitForTimeout(400);
   const afterLoad = await page.evaluate(() => ({
@@ -479,7 +485,7 @@ async function run() {
 
   // And the "discard" path: a fresh load with ?sc= but the user doesn't click Save → reload without ?sc → strategy gone.
   await fresh(page);
-  await page.goto(BASE + '/index.html?v=23&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/index.html?v=32&sc=' + encodeURIComponent(JSON.stringify(sc)), { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#chart-legend .legend-chip', { timeout: 15000 });
   await page.waitForTimeout(400);
   await page.goto(BASE + '/index.html', { waitUntil: 'domcontentloaded' });

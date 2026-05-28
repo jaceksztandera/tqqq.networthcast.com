@@ -226,32 +226,19 @@ function escA(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Built-in strategies offered in the heatmap dropdowns, gated to those whose
-// line is currently visible on the main chart (snapshot at modal-open). Returns
-// [value, label] pairs. If the chart isn't up yet, returns them all.
-//
-// The Buy & Hold chip is a CONSOLIDATED slot — only dataset 2 ever shows on the
-// chart, and its content swaps based on #select-bh-underlying. So when BH is
-// visible we expose exactly one bh-* key here, matching whichever ticker the
-// user picked (its label is "B&H <TICKER>"); the other bh-* variants are
-// dormant and would otherwise be filtered out anyway.
+// Built-in strategies offered in the heatmap dropdowns. Returns [value, label]
+// pairs. Mirrors the four default main-chart chips: 9sig, the active B&H
+// (whatever ticker the user picked), and SMA — plus Compounded Cash (added
+// separately in the baseline dropdown's "Baseline" group). Saved configs go
+// in their own group via refreshAnalyticsPickers().
 function _visibleBuiltinStrategies() {
   refresh9sigDisplayLabels();
-  const mainChart = (typeof chart !== 'undefined') ? chart : null;
   const bhUL = ((document.getElementById('select-bh-underlying') || {}).value || 'tqqq').toLowerCase();
-  const bhKey   = 'bh-' + bhUL;
-  const bhLabel = 'B&H ' + bhUL.toUpperCase();
-  // BH is whichever ticker is loaded into dataset 2 right now; visibility tracks
-  // dataset 2, not the dormant variant slot. Other strategies use their own idx.
-  const bhVisible = !mainChart || mainChart.isDatasetVisible(2);
-  const out = [['9sig', analyticsKeyLabel('9sig')]];
-  if (bhVisible) out.push([bhKey, bhLabel]);
-  out.push(['sma', 'SMA']);
-  return out.filter(([k]) => {
-    if (k === bhKey) return bhVisible; // already gated above
-    const idx = STRATEGY_KEY_TO_DATASET_IDX[k];
-    return !mainChart || idx == null || mainChart.isDatasetVisible(idx);
-  });
+  return [
+    ['9sig',        analyticsKeyLabel('9sig')],
+    ['bh-' + bhUL,  'B&H ' + bhUL.toUpperCase()],
+    ['sma',         'SMA'],
+  ];
 }
 
 // Populate the two sentence dropdowns: "Visualize <strategy> in heatmap, colored
@@ -693,6 +680,155 @@ document.addEventListener('change', (e) => {
     tooltip.style.left = Math.max(4, x) + 'px';
     tooltip.style.top  = Math.max(4, y) + 'px';
   }
+  // Column-header tooltip: aggregates every cell in the hovered column
+  // (period = N-year horizon, regardless of start year). Shows median / mean /
+  // min / max for final $, money-weighted-ish CAGR, and worst-drawdown — plus a
+  // decile bar chart so the user can see "if you started in a top-10% year,
+  // your median outcome was X; bottom 10%, it was Y."
+  function fillColumnHeaderTooltip(th) {
+    const period = +th.dataset.c;
+    if (!Number.isFinite(period) || period <= 0) return false;
+    // Gather cells with valid data in this column.
+    const cells = grid.querySelectorAll('td.heatmap-cell:not(.empty)[data-c="' + period + '"]');
+    const samples = [];
+    cells.forEach(td => {
+      const v = +td.dataset.value;
+      const sy = +td.dataset.r;
+      if (Number.isFinite(v) && v > 0 && Number.isFinite(sy)) {
+        samples.push({ year: sy, value: v, dd: +td.dataset.maxDd });
+      }
+    });
+    if (samples.length === 0) return false;
+
+    // Compute total contributed for this horizon (same for every cell in the
+    // column → comparing cells by simple CAGR ≡ comparing by final $).
+    const initial = sliderToInitial(+document.getElementById('slider-initial').value);
+    const monthly = +document.getElementById('slider-monthly').value || 0;
+    const raise   = (+document.getElementById('slider-raise').value || 0) / 100;
+    let contributed = initial;
+    for (let y = 0; y < period; y++) contributed += 12 * monthly * Math.pow(1 + raise, y);
+    // CAGR per cell: simple end/contributed annualization. Easy to read, and
+    // monotone with final $ within a single column.
+    for (const s of samples) {
+      s.cagr = contributed > 0 && s.value > 0 ? (Math.pow(s.value / contributed, 1 / period) - 1) * 100 : 0;
+    }
+
+    // Stats helpers.
+    const sortAsc = arr => arr.slice().sort((a, b) => a - b);
+    const median = sortedArr => {
+      const n = sortedArr.length;
+      if (n === 0) return 0;
+      return n % 2 ? sortedArr[(n - 1) >> 1] : (sortedArr[n / 2 - 1] + sortedArr[n / 2]) / 2;
+    };
+    const mean = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    const stat = arr => {
+      const s = sortAsc(arr);
+      return { median: median(s), mean: mean(arr), min: s[0], max: s[s.length - 1] };
+    };
+    const valStat  = stat(samples.map(s => s.value));
+    const cagrStat = stat(samples.map(s => s.cagr));
+    const ddArr    = samples.map(s => Number.isFinite(s.dd) ? s.dd : 0);
+    const ddStat   = stat(ddArr);
+    // The starting years that produced the extremes (for "best/worst $" labels).
+    const byVal = samples.slice().sort((a, b) => a.value - b.value);
+    const worstYear = byVal[0].year, bestYear = byVal[byVal.length - 1].year;
+
+    // Deciles of final $, sorted best → worst. For each decile, report its
+    // MEDIAN final $ (the user's framing: "median performance in the top 10%,
+    // then in the next 10%, ..."). Columns with fewer than 10 cells just leave
+    // some deciles empty — bars are scaled to whatever's present.
+    const n = samples.length;
+    const sortedDesc = samples.map(s => s.value).sort((a, b) => b - a);
+    const decileMedians = [];
+    for (let d = 0; d < 10; d++) {
+      const lo = Math.floor(d * n / 10);
+      const hi = Math.floor((d + 1) * n / 10);
+      if (lo >= hi) { decileMedians.push(null); continue; }
+      decileMedians.push(median(sortAsc(sortedDesc.slice(lo, hi))));
+    }
+    // Compact dollar format for the value labels — fits in ~50px at 10px font.
+    const fmtBarLabel = (v) => {
+      if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+      if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+      if (v >= 1e3) return '$' + Math.round(v / 1e3) + 'K';
+      return '$' + Math.round(v);
+    };
+    const haveAny = decileMedians.some(v => v != null && v > 0);
+    const dMax = haveAny ? Math.max(...decileMedians.filter(v => v != null && v > 0)) : 1;
+    // Vertical row layout: each decile is a horizontal bar in its own row,
+    // stacked top (best) to bottom (worst). Plain-English row label on the
+    // left, bar in the middle, $ value pinned at the end of the bar.
+    const decileLabels = [
+      'Top 10%', '10–20%', '20–30%', '30–40%', '40–50%',
+      '50–60%', '60–70%', '70–80%', '80–90%', 'Bottom 10%',
+    ];
+    const w = 360;
+    const padX = 4;
+    const padY = 4;
+    const rowH = 15;
+    const rowGap = 3;
+    const leftLabelW = 72;   // "Bottom 10%" worst-case width at font-size 10
+    const valueLabelW = 64;  // "$1.4M" worst-case width with breathing room
+    const barAreaX = padX + leftLabelW;
+    const barAreaW = w - padX * 2 - leftLabelW - valueLabelW;
+    const h = padY * 2 + 10 * rowH + 9 * rowGap;
+    let rows = '';
+    for (let i = 0; i < 10; i++) {
+      const v = decileMedians[i];
+      const y = padY + i * (rowH + rowGap);
+      const labelY = y + rowH - 4;
+      // Left label: "Top 10%", "10–20%", … "Bottom 10%" (right-aligned).
+      rows += `<text x="${padX + leftLabelW - 6}" y="${labelY}" text-anchor="end" font-size="10" font-family="JetBrains Mono" fill="#94a3b8">${decileLabels[i]}</text>`;
+      if (v == null || v <= 0) continue;
+      const barLen = Math.max(2, (v / dMax) * barAreaW);
+      // Green at top decile → red at bottom (hue 130 → 0).
+      const hue = Math.round(130 - i * 13);
+      rows += `<rect x="${barAreaX}" y="${y}" width="${barLen.toFixed(1)}" height="${rowH}" fill="hsl(${hue}, 65%, 48%)" rx="1">`
+            + `<title>${decileLabels[i]} of start years: median ${fmtFull(Math.round(v))}</title>`
+            + `</rect>`;
+      // $ value pinned just past the bar's right edge.
+      rows += `<text x="${(barAreaX + barLen + 4).toFixed(1)}" y="${labelY}" text-anchor="start" font-family="JetBrains Mono" font-size="10" font-weight="600" fill="#e2e8f0">${fmtBarLabel(v)}</text>`;
+    }
+    const svg = `<svg class="tt-decile-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${rows}</svg>`;
+
+    const fmtMoney = (v) => fmtFull(Math.round(v));
+    const fmtPct   = (v) => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+    const fmtDD    = (v) => v > 0 ? '−' + (v * 100).toFixed(1) + '%' : '0.0%';
+
+    tooltip.innerHTML = `
+      <button class="tt-close" type="button" aria-label="Close" data-tt-close>&times;</button>
+      <div class="tt-period">
+        <span>${period}-year horizon</span>
+      </div>
+      <div class="tt-hdr-stats">
+        <div class="tt-hdr-stat-row">
+          <span class="tt-hdr-stat-label">Final $</span>
+          <span class="tt-hdr-stat-cell"><span>Median</span><b>${fmtMoney(valStat.median)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Mean</span><b>${fmtMoney(valStat.mean)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Min (${worstYear})</span><b>${fmtMoney(valStat.min)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Max (${bestYear})</span><b>${fmtMoney(valStat.max)}</b></span>
+        </div>
+        <div class="tt-hdr-stat-row">
+          <span class="tt-hdr-stat-label">CAGR</span>
+          <span class="tt-hdr-stat-cell"><span>Median</span><b>${fmtPct(cagrStat.median)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Mean</span><b>${fmtPct(cagrStat.mean)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Min</span><b>${fmtPct(cagrStat.min)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Max</span><b>${fmtPct(cagrStat.max)}</b></span>
+        </div>
+        <div class="tt-hdr-stat-row">
+          <span class="tt-hdr-stat-label">Drawdown</span>
+          <span class="tt-hdr-stat-cell"><span>Median</span><b>${fmtDD(ddStat.median)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Mean</span><b>${fmtDD(ddStat.mean)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Worst</span><b>${fmtDD(ddStat.max)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Best</span><b>${fmtDD(ddStat.min)}</b></span>
+        </div>
+      </div>
+      <div class="tt-decile-title">Median final $ if your start year landed in&hellip;</div>
+      ${svg}
+    `;
+    return true;
+  }
+
   function fillTooltip(td) {
     const startYear = +td.dataset.r;
     const period    = +td.dataset.c;
@@ -768,6 +904,9 @@ document.addEventListener('change', (e) => {
         fillTooltip(cell);
         tooltip.removeAttribute('hidden');
         positionTooltip(cell, e);
+      } else if (cell.matches('th[data-c]') && cell.dataset.c != null && fillColumnHeaderTooltip(cell)) {
+        tooltip.removeAttribute('hidden');
+        positionTooltip(cell, e);
       } else {
         hideTooltip();
       }
@@ -782,6 +921,16 @@ document.addEventListener('change', (e) => {
   // (a tap or stylus click works the same as hover there).
   grid.addEventListener('click', (e) => {
     if (e.target && e.target.closest && e.target.closest('.spiral-svg')) return;
+    const headerCell = e.target.closest('th[data-c]');
+    if (headerCell && grid.contains(headerCell) && headerCell.dataset.c != null) {
+      clearHighlights();
+      applyHighlights(null, headerCell.dataset.c);
+      if (fillColumnHeaderTooltip(headerCell)) {
+        tooltip.removeAttribute('hidden');
+        positionTooltip(headerCell, e);
+      }
+      return;
+    }
     const cell = e.target.closest('td.heatmap-cell:not(.empty)');
     if (!cell || !grid.contains(cell) || cell.dataset.value == null) return;
     clearHighlights();
@@ -1630,6 +1779,18 @@ function buildTooltipLineChart(series, opts) {
   // baseline has the same sample count as the strategy series we map
   // index-for-index; otherwise we treat it as a flat target and stretch
   // its first value across the full width.
+  // Start / end markers + value labels at the line endpoints. Decide whether
+  // to place each label above or below the dot based on which side has more
+  // breathing room (so labels don't crash into the bar strip or the bottom).
+  // We need the strategy endpoint Y *first* so the baseline label below can
+  // dodge it when the two endpoint values are close together.
+  const startX = xAt(0),                     startY = yLineAt(series[0].value);
+  const endX   = xAt(series.length - 1),     endY   = yLineAt(series[series.length - 1].value);
+  const labelAbove = (cy) => cy - lineTop > lineH * 0.45;
+  const stratLabelAbove = labelAbove(endY);
+  const startLabelY = labelAbove(startY) ? startY - 6 : startY + 12;
+  const endLabelY   = stratLabelAbove    ? endY   - 6 : endY   + 12;
+
   let baselinePath = '';
   let baselineEndLabel = '';
   if (baselineSeries && baselineSeries.length) {
@@ -1650,26 +1811,33 @@ function buildTooltipLineChart(series, opts) {
     }
     if (bPath) {
       baselinePath = `<path d="${bPath}" fill="none" stroke="rgba(226,232,240,0.55)" stroke-width="1.2" stroke-dasharray="3,3"/>`;
-      // Dollar-value tag pinned at the right end of the dashed line —
-      // shows the baseline's endpoint value so the user can compare it
-      // against the strategy's end value at a glance.
+      // Dollar-value tag pinned at the right end of the dashed line — shows
+      // the baseline's endpoint value so the user can compare it against the
+      // strategy's end value at a glance. To avoid collision with the
+      // strategy's endpoint label when the two endpoints are vertically close,
+      // we anchor the baseline label on the OPPOSITE side of its dot (and
+      // further left horizontally) — the two labels never overlap.
       const lastV = baselineSeries[baselineSeries.length - 1].value;
       if (Number.isFinite(lastV)) {
-        const yEnd = yLineAt(lastV);
-        const xEnd = xAt(series.length - 1);
-        baselineEndLabel = `<text x="${(xEnd - 4).toFixed(1)}" y="${(yEnd - 4).toFixed(1)}" text-anchor="end" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="rgba(226,232,240,0.85)" stroke="rgba(10,14,23,0.92)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${fmtFull(Math.round(lastV))}</text>`;
+        const yEndB = yLineAt(lastV);
+        const xEndB = xAt(series.length - 1);
+        const endpointsClose = Math.abs(yEndB - endY) < 26;
+        // Default: 4px above. On collision: flip to the side opposite the
+        // strategy label, with an extra 4px buffer.
+        let yLbl;
+        if (endpointsClose) {
+          // Baseline goes on the opposite side from strategy's label.
+          yLbl = stratLabelAbove ? yEndB + 14 : yEndB - 8;
+        } else {
+          yLbl = yEndB - 4;
+        }
+        // Also shift baseline label further left so its right edge ends before
+        // the strategy label's right edge (strategy is anchored at xEnd-15).
+        const xLbl = xEndB - 18;
+        baselineEndLabel = `<text x="${xLbl.toFixed(1)}" y="${yLbl.toFixed(1)}" text-anchor="end" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="rgba(226,232,240,0.85)" stroke="rgba(10,14,23,0.92)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${fmtFull(Math.round(lastV))}</text>`;
       }
     }
   }
-
-  // Start / end markers + value labels at the line endpoints. Decide whether
-  // to place each label above or below the dot based on which side has more
-  // breathing room (so labels don't crash into the bar strip or the bottom).
-  const startX = xAt(0),                     startY = yLineAt(series[0].value);
-  const endX   = xAt(series.length - 1),     endY   = yLineAt(series[series.length - 1].value);
-  const labelAbove = (cy) => cy - lineTop > lineH * 0.45;
-  const startLabelY = labelAbove(startY) ? startY - 6 : startY + 12;
-  const endLabelY   = labelAbove(endY)   ? endY   - 6 : endY   + 12;
   const startTxt = fmtFull(Math.round(series[0].value));
   const endTxt   = fmtFull(Math.round(series[series.length - 1].value));
   const endpoints = `

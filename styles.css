@@ -1096,6 +1096,70 @@
     white-space: nowrap;
   }
 
+  /* Column-header tooltip: per-horizon stats grid + decile bar chart. */
+  .heatmap-tooltip .tt-hdr-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 6px 0 8px;
+  }
+  .heatmap-tooltip .tt-hdr-stat-row {
+    display: grid;
+    grid-template-columns: 60px repeat(4, 1fr);
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .heatmap-tooltip .tt-hdr-stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+  }
+  .heatmap-tooltip .tt-hdr-stat-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    background: rgba(15, 23, 42, 0.55);
+    border-radius: 3px;
+    padding: 3px 6px;
+    min-width: 0;
+  }
+  .heatmap-tooltip .tt-hdr-stat-cell > span {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .heatmap-tooltip .tt-hdr-stat-cell > b {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .heatmap-tooltip .tt-decile-title {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 6px;
+  }
+  .heatmap-tooltip .tt-decile-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 2px;
+  }
+  /* Cursor affordance — column headers are clickable for the stats popup. */
+  .heatmap-table th[data-c] { cursor: pointer; }
+
   .dual-range {
     position: relative;
     height: 32px;
