@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
 const LS_KEY = '9sig-sliders';
 // Bump APP_VERSION whenever a backwards-incompatible change ships (a control
 // id is renamed, a default flips, a strategy is dropped). On mismatch we
@@ -8,7 +8,7 @@ const LS_KEY = '9sig-sliders';
 // nuking storage silently; the user clicks it when they're ready to load
 // the new defaults. If they've never visited before (no stored version),
 // we just record the current one without prompting.
-const APP_VERSION = 22; // bumped when SSO (2x SPY) and SPXL (3x SPY) were added as underlyings
+const APP_VERSION = 23; // bumped when 9sig got a park-asset option (safety side as QQQ/SPY/QLD/TQQQ/SSO/SPXL/QQQ5 instead of cash)
 // NOTE: when you change any js/*.js or styles.css, also bump the matching ?v=
 // cache-bust query on the <script>/<link> tags in index.html (keep it equal to
 // APP_VERSION) so returning browsers fetch the new files instead of stale cache.
@@ -145,7 +145,7 @@ function saveSliders() {
     render();
   });
 });
-['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
+['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => {
     saveSliders();
@@ -155,13 +155,15 @@ function saveSliders() {
     if (id.startsWith('select-9sig-') && typeof refresh9sigDisplayLabels === 'function') {
       refresh9sigDisplayLabels();
     }
-    if (id === 'select-9sig-cash') update9sigCashSpans();
+    if (id === 'select-9sig-cash' || id === 'select-9sig-park-asset') update9sigCashSpans();
     render();
   });
 });
 
 // Update the inline "(100−x)%" stock-share and spike-reset-target spans
-// when the user picks a different initial cash %.
+// when the user picks a different initial cash %. Also retitles the
+// safety-side label and hides the cash-rate row when the safety side is
+// parked as a non-cash asset (the cash rate doesn't apply in that mode).
 function update9sigCashSpans() {
   const cashP = +((document.getElementById('select-9sig-cash') || {}).value) || 0;
   const stockP = 100 - cashP;
@@ -169,6 +171,9 @@ function update9sigCashSpans() {
   const b = document.getElementById('9sig-spike-target');
   if (a) a.textContent = stockP + '%';
   if (b) b.textContent = stockP + '%';
+  const park = ((document.getElementById('select-9sig-park-asset') || {}).value) || 'cash';
+  const rateRow = document.getElementById('9sig-cashrate-row');
+  if (rateRow) rateRow.style.display = park === 'cash' ? '' : 'none';
 }
 
 // The "Deploy 50% of each contribution" toggle only does anything when there
@@ -519,6 +524,7 @@ function shareConfig() {
   if (get('select-9sig-buypower'))   params.set('nbp', get('select-9sig-buypower').value);
   if (get('select-9sig-deploy'))     params.set('nd', get('select-9sig-deploy').checked ? '1' : '0');
   if (get('select-9sig-target-compound')) params.set('tc', get('select-9sig-target-compound').checked ? '1' : '0');
+  if (get('select-9sig-park-asset')) params.set('npa', get('select-9sig-park-asset').value);
 
   // Toggles
   params.set('l',

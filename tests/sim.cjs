@@ -134,6 +134,28 @@ ck('9sig with underlyingCol=6 (SSO): ssoPoints present + doubles',
 ck('9sig with underlyingCol=7 (SPXL): spxlPoints present + doubles',
    approx(simulate(1000, 0, 0, 0, last, 0, { qGrowth: 0.09, underlyingCol: 7 }).spxlPoints.at(-1).value, 2000));
 
+// ----- 9sig park-asset: safety side held as an underlying instead of cash -----
+// Flat prices → parking in QQQ should yield the same end value as cash + 0 rate.
+install(flat);
+const rParkCash = simulate(1000, 100, 0, 0, last, 0, { qGrowth: 0.09 });
+const rParkQQQ  = simulate(1000, 100, 0, 0, last, 0, { qGrowth: 0.09, parkAsset: 'qqq' });
+ck('parkAsset=qqq on flat prices: same end total as cash + 0 rate',
+   approx(rParkCash.log.at(-1).total, rParkQQQ.log.at(-1).total, 1e-6),
+   'cash ' + rParkCash.log.at(-1).total.toFixed(2) + ' vs qqq ' + rParkQQQ.log.at(-1).total.toFixed(2));
+// Doubling underlying with parkAsset=qqq: the safety side rides the doubling.
+// 1000 initial, 40% cashPct → 400 parked. No contribs. On doubling, parked side
+// = 800. Stock side (col 1, TQQQ) also doubles: 600 → 1200. Total ~2000 if no
+// rebalance pulled. With 9sig SELL at q1, the holding gets pulled back to signal
+// but the SELL proceeds go INTO the park asset (which is also doubled).
+install(dblP);
+const rParkDbl = simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09, spikeTriggerPct: 0, parkAsset: 'qqq' });
+ck('parkAsset=qqq on doubling: total > parkAsset=cash equivalent (safety rides)',
+   rParkDbl.log[1].total > simulate(1000, 0, 0, 0, 1, 0, { qGrowth: 0.09, spikeTriggerPct: 0 }).log[1].total + 100,
+   'park-qqq ' + rParkDbl.log[1].total.toFixed(2));
+// Invariant still holds: total === tqqqVal + cash (cash is re-priced from park shares).
+ck('parkAsset=qqq: total === tqqqVal + cash invariant preserved',
+   rParkDbl.log.every(l => approx(l.total, l.tqqqVal + l.cash, 1e-6)));
+
 // ----- #1 signal growth is LITERAL per rebalance period -----
 install(flat);
 r = simulate(1000, 0, 0, 0, last, 0, { qGrowth: 0.09 });

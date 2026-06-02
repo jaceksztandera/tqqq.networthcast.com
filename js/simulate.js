@@ -336,6 +336,19 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   // Buying-power cap: a BUY never spends more than this fraction of cash, so
   // some dry powder is always kept. Canonical 9Sig keeps 10% (spends 90%).
   const buyThrottle = Math.max(0, Math.min(1, (opts.buyThrottlePct != null ? +opts.buyThrottlePct : 90) / 100));
+  // Park asset for the non-underlying ("cash") side. Default 'cash' keeps the
+  // safety bucket as actual cash earning the configured rate. Any other ticker
+  // (qqq/spy/qld/qqq5/sso/spxl/tqqq) holds the safety side as shares of that
+  // asset instead — contributions and rebalance proceeds buy into it, and the
+  // cash rate stops accruing (cash-rate only applies to actual cash). The
+  // safety side's dollar value floats with the park asset's price; rebalance
+  // decisions still compare the underlying's value to the signal target, and
+  // BUY/SELL convert between TQQQ and the park asset directly.
+  const parkAsset = (opts.parkAsset || 'cash').toLowerCase();
+  const parkCol   = (typeof SMA_ASSET_COL !== 'undefined' && SMA_ASSET_COL[parkAsset]) != null
+                    ? SMA_ASSET_COL[parkAsset] : null;
+  const isCashPark = parkAsset === 'cash' || parkCol == null;
+  const parkPriceAt = (row) => isCashPark ? 1 : (row && row[parkCol]) || 0;
   // Target-growth base. Default false → each period's target grows from the
   // PREVIOUS HOLDING (target re-anchors to reality each period — no runaway gap
   // when buys are throttled / 30-down fires). Set true to keep compounding the
@@ -427,10 +440,18 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const qSlice = qData.slice(entryIdx, exitIdx + 1);
   if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], spyPoints: [], qldPoints: [], qqq5Points: [], ssoPoints: [], spxlPoints: [], totalContributed: initial };
 
-  // Initial allocation: stockPct in the leveraged ETF, cashPct in cash. The
-  // canonical 9Sig is 60/40 (stockPct=0.6, cashPct=0.4) — the user picks via
-  // the side-panel dropdown. Cash earns the configured monthly rate.
+  // Initial allocation: stockPct in the leveraged ETF, cashPct in the park
+  // bucket (cash by default, or shares of qqq/spy/etc. when parkAsset is set).
+  // For cash, `cash` IS the dollar balance and parkShares stays at 0. For an
+  // asset, parkShares = cashPct$ / asset price at entry, and `cash` mirrors
+  // the asset's current dollar value (re-priced each quarter before the
+  // rebalance decision uses it).
   let cash = initial * cashPct;
+  let parkShares = 0;
+  if (!isCashPark) {
+    const p0 = parkPriceAt(qSlice[0]);
+    parkShares = p0 > 0 ? cash / p0 : 0;
+  }
   let tqqqShares = (initial * stockPct) / qSlice[0][ulCol];
   let signalLine = initial * stockPct; // target value starts at initial stock allocation
   // Each new target grows from the PREVIOUS REBALANCE's post-rebalance holding
@@ -483,17 +504,33 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
       // price is missing (data gap / pre-history) — otherwise the stock
       // half would silently evaporate, since shares can't be bought without
       // a price to divide by.
-      const applyContribAtPrice = (mPrice, mDate) => {
+      const applyContribAtPrice = (mPrice, mDate, monthlyRow) => {
         const toStock = currentMonthly * contribDeployPct;
+        const toPark  = currentMonthly - toStock;
         if (toStock > 0 && mPrice > 0) {
           tqqqShares += toStock / mPrice;
-          cash += currentMonthly - toStock;
-        } else {
-          cash += currentMonthly; // no price → can't buy; entire amount waits in cash
+        } else if (toStock > 0) {
+          // No underlying price (data gap) — the would-be stock half waits as
+          // park instead. (For cash park that's `cash`; for asset park that's
+          // shares of the asset bought at this month's price, if available.)
+        }
+        // Park-side flow:
+        //  - cash mode: dollar bucket grows by `toPark`, then earns interest.
+        //  - asset mode: buy shares at the month's park price; cash is just a
+        //    stale dollar mirror (re-priced after the loop). No interest.
+        if (isCashPark) {
+          // Always include the no-price fallback's full amount + the explicit
+          // toPark when a stock-half ran.
+          const addCash = (toStock > 0 && mPrice > 0) ? toPark : currentMonthly;
+          cash += addCash;
+          cash *= (1 + monthlyRate);
+        } else if (toPark > 0) {
+          const parkMP = monthlyRow ? (monthlyRow[parkCol] || 0) : 0;
+          if (parkMP > 0) parkShares += toPark / parkMP;
+          else            cash += toPark; // missing park price → stash as cash; reconciled at next rebalance
         }
         totalInvested += currentMonthly;
         newCashThisQ += currentMonthly;
-        cash *= (1 + monthlyRate);
         investedCompounded *= (1 + baselineMonthlyRate);
         investedCompounded += currentMonthly;
         // Intra-period quarter-end snapshot (the period's own end is recorded
@@ -501,18 +538,30 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         // correct, since the target only steps at a rebalance.
         if (sampleQuarterly && mDate && mDate < qDate && mPrice > 0 && isQuarterEnd(mDate)) {
           const sv = tqqqShares * mPrice;
-          samplePoints.push({ date: mDate, price: mPrice, tqqqVal: sv, cash, total: sv + cash, target: signalLine, invested: totalInvested, investedCompounded });
+          const cashAtSample = isCashPark
+            ? cash
+            : (monthlyRow && monthlyRow[parkCol] > 0 ? parkShares * monthlyRow[parkCol] : cash);
+          samplePoints.push({ date: mDate, price: mPrice, tqqqVal: sv, cash: cashAtSample, total: sv + cashAtSample, target: signalLine, invested: totalInvested, investedCompounded });
         }
       };
       if (fastMonthly) {
         const monthsInQ = monthsLookup[entryIdx + qi];
         for (let mi = 0; mi < monthsInQ.length; mi++) {
-          applyContribAtPrice(monthlyData[monthsInQ[mi]][ulCol], monthlyData[monthsInQ[mi]][0]);
+          applyContribAtPrice(monthlyData[monthsInQ[mi]][ulCol], monthlyData[monthsInQ[mi]][0], monthlyData[monthsInQ[mi]]);
         }
       } else {
         for (const row of monthlyData) {
-          if (row[0] > prevQDate && row[0] <= qDate) applyContribAtPrice(row[ulCol], row[0]);
+          if (row[0] > prevQDate && row[0] <= qDate) applyContribAtPrice(row[ulCol], row[0], row);
         }
+      }
+
+      // Re-price the park bucket to this period's prices before the rebalance
+      // logic reads `cash`. For cash mode this is a no-op; for asset mode it
+      // converts parkShares (built up via contributions) back to a dollar
+      // value at the rebalance row's park price.
+      if (!isCashPark) {
+        const parkP = parkPriceAt(qSlice[qi]);
+        if (parkP > 0) cash = parkShares * parkP;
       }
 
       let action = '';
@@ -552,11 +601,24 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         }
         const inCrashZone = qPrice < peak2y * crashFactor;
 
+        // Park-side conversion helpers. For cash mode they're no-ops; for an
+        // asset park, every dollar moved in/out of the safety bucket has to
+        // be translated to a share count at the rebalance row's park price.
+        const parkPriceNow = parkPriceAt(qSlice[qi]);
+        const moveIntoPark = (dollars) => {
+          cash += dollars;
+          if (!isCashPark && parkPriceNow > 0) parkShares += dollars / parkPriceNow;
+        };
+        const moveOutOfPark = (dollars) => {
+          cash -= dollars;
+          if (!isCashPark && parkPriceNow > 0) parkShares -= dollars / parkPriceNow;
+        };
+
         if (diff > 0 && !inCrashZone) {
-          // SELL: TQQQ above signal, sell excess to cash
+          // SELL: TQQQ above signal, sell excess to cash (or park asset)
           const sharesToSell = diff / qPrice;
           tqqqShares -= sharesToSell;
-          cash += diff;
+          moveIntoPark(diff);
           action = 'SELL ' + fmt(diff);
           crashNoSellCount = 0;
         } else if (diff > 0 && inCrashZone && crashNoSellCount < 2) {
@@ -567,7 +629,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
           // Crash zone but already skipped 2 consecutive quarters — sell anyway
           const sharesToSell = diff / qPrice;
           tqqqShares -= sharesToSell;
-          cash += diff;
+          moveIntoPark(diff);
           action = 'SELL ' + fmt(diff) + ' (30d expired)';
           crashNoSellCount = 0;
         } else if (diff < 0 && cash > 0) {
@@ -578,7 +640,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
           if (needed > 0) {
             const sharesToBuy = needed / qPrice;
             tqqqShares += sharesToBuy;
-            cash -= needed;
+            moveOutOfPark(needed);
             action = needed < -diff ? 'BUY ' + fmt(needed) + ' (part)' : 'BUY ' + fmt(needed);
           } else {
             action = 'HOLD';
@@ -603,6 +665,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
           const reduceBy = postTqqqVal - targetTqqqVal;
           tqqqShares = targetTqqqVal / qPrice;
           cash       = postTotal - targetTqqqVal;
+          if (!isCashPark && parkPriceNow > 0) parkShares = cash / parkPriceNow;
           signalLine = targetTqqqVal;
           action = 'RESET ' + fmt(reduceBy) + ' (spike)';
         }

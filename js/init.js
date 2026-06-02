@@ -80,6 +80,7 @@
   if (params.get('nbp') !== null){ document.getElementById('select-9sig-buypower').value    = params.get('nbp'); hasUrlParams = true; }
   if (params.get('nd') !== null) { document.getElementById('select-9sig-deploy').checked   = params.get('nd') === '1'; hasUrlParams = true; }
   if (params.get('tc') !== null) { document.getElementById('select-9sig-target-compound').checked = params.get('tc') === '1'; hasUrlParams = true; }
+  if (params.get('npa') !== null) { document.getElementById('select-9sig-park-asset').value = params.get('npa'); hasUrlParams = true; }
   // Toggles
   if (params.get('l')  !== null) { setLogScale(params.get('l') === '1'); hasUrlParams = true; }
   if (params.get('ev') !== null) { document.getElementById('toggle-envelope').checked    = params.get('ev') === '1'; hasUrlParams = true; }

@@ -31,7 +31,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" defer></script>
-<link rel="stylesheet" href="styles.css?v=35">
+<link rel="stylesheet" href="styles.css?v=38">
 </head>
 <body>
 
@@ -216,7 +216,18 @@
         <option value="80">80%</option>
         <option value="90">90%</option>
       </select>
-      cash and use remaining <span id="9sig-stock-pct">60%</span> to buy
+      <select class="inline-select" id="select-9sig-park-asset">
+        <option value="cash" selected>cash</option>
+        <option value="qqq">QQQ</option>
+        <option value="spy">SPY</option>
+        <option value="qld">QLD</option>
+        <option value="tqqq">TQQQ</option>
+        <option value="sso">SSO</option>
+        <option value="spxl">SPXL</option>
+        <option value="qqq5">QQQ5</option>
+      </select>
+      <span class="info-icon" tabindex="0" data-tip="Canonical 9sig parks the safety side (the cash %) as actual cash earning the rate below. Pick another ticker to hold that side as shares of QQQ/SPY/etc. instead — contributions and rebalance proceeds buy into it, the cash rate stops applying, and rebalance BUYS/SELLS convert between the underlying and the park asset at each rebalance. Picking a leveraged ticker leverages both legs.">ⓘ</span>
+      and use remaining <span id="9sig-stock-pct">60%</span> to buy
       <select class="inline-select" id="select-9sig-underlying">
         <option value="tqqq" selected>TQQQ</option>
         <option value="qld">QLD</option>
@@ -226,7 +237,7 @@
       </select>.
     </div>
 
-    <div class="adaptive-line">
+    <div class="adaptive-line" id="9sig-cashrate-row">
       That parked cash earns
       <select class="inline-select" id="select-9sig-cashrate">
         <option value="0">0.0%</option>
@@ -776,16 +787,16 @@
      returning browsers fetch the new files instead of serving stale cached
      copies (a stale JS file against fresh HTML throws null-element errors).
      Keep this in sync with APP_VERSION in controls.js. -->
-<script src="js/data.js?v=35"></script>
-<script src="js/utils.js?v=35"></script>
-<script src="js/simulate.js?v=35"></script>
-<script src="js/metrics.js?v=35"></script>
-<script src="js/chart.js?v=35"></script>
-<script src="js/controls.js?v=35"></script>
-<script src="js/analytics.js?v=35"></script>
-<script src="js/preview-dropdown.js?v=35"></script>
-<script src="js/saved-configs.js?v=35"></script>
-<script src="js/init.js?v=35"></script>
+<script src="js/data.js?v=38"></script>
+<script src="js/utils.js?v=38"></script>
+<script src="js/simulate.js?v=38"></script>
+<script src="js/metrics.js?v=38"></script>
+<script src="js/chart.js?v=38"></script>
+<script src="js/controls.js?v=38"></script>
+<script src="js/analytics.js?v=38"></script>
+<script src="js/preview-dropdown.js?v=38"></script>
+<script src="js/saved-configs.js?v=38"></script>
+<script src="js/init.js?v=38"></script>
 
 </body>
 </html>

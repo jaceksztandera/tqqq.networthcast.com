@@ -901,6 +901,7 @@ function render() {
   const contribDeployPct = ((document.getElementById('select-9sig-deploy') || {}).checked) ? 0.5 : 0;
   const targetFromPrevTarget = !!((document.getElementById('select-9sig-target-compound') || {}).checked);
   const buyThrottlePct = (+((document.getElementById('select-9sig-buypower') || {}).value) || 90);
+  const parkAsset = ((document.getElementById('select-9sig-park-asset') || {}).value) || 'cash';
 
   const sigOpts = {
     qGrowth,
@@ -913,6 +914,7 @@ function render() {
     contribDeployPct,
     targetFromPrevTarget,
     buyThrottlePct,
+    parkAsset,
     // A yearly run is coarser than the quarterly x-axis floor → ask the sim for
     // quarter-end value snapshots so the line/hover have quarter resolution.
     sampleQuarterly: mainPeriod === 'yearly',
@@ -1019,6 +1021,7 @@ function render() {
           contribDeployPct,
           targetFromPrevTarget,
           buyThrottlePct,
+          parkAsset,
         });
       })
     : [];

@@ -28,6 +28,7 @@
     'select-9sig-crashwin':   { kind: '9sig', apply: (p, v) => { p.crashLookbackMonths = +v; } },
     'select-9sig-spike':      { kind: '9sig', apply: (p, v) => { p.spikeTriggerPct = +v; } },
     'select-9sig-buypower':   { kind: '9sig', apply: (p, v) => { p.buyThrottlePct = +v; } },
+    'select-9sig-park-asset': { kind: '9sig', apply: (p, v) => { p.parkAsset = v; } },
     'select-bh-underlying':   { kind: 'bh' },
     'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
     'select-sma-asset':       { kind: 'sma', apply: (p, v) => { p.smaAsset = v; } },
@@ -80,6 +81,7 @@
       contribDeployPct: (document.getElementById('select-9sig-deploy') || {}).checked ? 0.5 : 0,
       targetFromPrevTarget: !!(document.getElementById('select-9sig-target-compound') || {}).checked,
       buyThrottlePct: _num('select-9sig-buypower', 90),
+      parkAsset: _str('select-9sig-park-asset', 'cash'),
     });
   }
 
@@ -106,7 +108,7 @@
       qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, crashDropPct: p.crashDropPct,
       crashLookbackMonths: p.crashLookbackMonths, spikeTriggerPct: p.spikeTriggerPct,
       rebalancePeriod: p.rebalancePeriod, cashPct: p.cashPct, contribDeployPct: p.contribDeployPct,
-      buyThrottlePct: p.buyThrottlePct, baselineRate: p.baselineRate, skipBH: true,
+      buyThrottlePct: p.buyThrottlePct, parkAsset: p.parkAsset, baselineRate: p.baselineRate, skipBH: true,
     });
     return (r.log && r.log.length) ? r.log[r.log.length - 1].total : 0;
   }
@@ -127,7 +129,7 @@
       qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, crashDropPct: p.crashDropPct,
       crashLookbackMonths: p.crashLookbackMonths, spikeTriggerPct: p.spikeTriggerPct,
       rebalancePeriod: p.rebalancePeriod, cashPct: p.cashPct, contribDeployPct: p.contribDeployPct,
-      buyThrottlePct: p.buyThrottlePct, baselineRate: p.baselineRate,
+      buyThrottlePct: p.buyThrottlePct, parkAsset: p.parkAsset, baselineRate: p.baselineRate,
     });
     const lastVal = (arr) => (arr && arr.length) ? arr[arr.length - 1].value : 0;
     return { tqqq: lastVal(r.bhPoints), qqq: lastVal(r.qqqPoints), spy: lastVal(r.spyPoints), qld: lastVal(r.qldPoints), qqq5: lastVal(r.qqq5Points), sso: lastVal(r.ssoPoints), spxl: lastVal(r.spxlPoints) };
