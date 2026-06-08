@@ -714,7 +714,7 @@ function cfgMoneyWeightedCAGR(ctx, finalV) {
 // Turn a (worker-computed) log into a label-aligned series + stats. No code eval.
 function customSeriesResult(log, ctx, error, tcOverride) {
   const labels = ctx.labels;
-  if (error) return { data: labels.map(() => null), cagr: 0, maxDD: 0, start: 0, end: 0 };
+  if (error) return { data: labels.map(() => null), cagr: 0, maxDD: 0, start: 0, end: 0, ddPeak: null, ddTrough: null };
   const points = (log || [])
     .filter(r => r && r.date != null && typeof r.value === 'number' && Number.isFinite(r.value))
     .map(r => ({ date: String(r.date), value: r.value }))
@@ -725,8 +725,8 @@ function customSeriesResult(log, ctx, error, tcOverride) {
   // Custom strategies have no reconstructable share/cash control points, so
   // drawdown stays on the rebalance-grain series. CAGR is money-weighted.
   const cagr = cfgMoneyWeightedCAGR(ctx, finalV);
-  const maxDD = (typeof computeMaxDrawdown === 'function') ? computeMaxDrawdown(series) * 100 : 0;
-  return { data: series, cagr, maxDD, start: startV, end: finalV };
+  const dd = (typeof computeMaxDrawdown === 'function') ? computeMaxDrawdown(series, labels) : { pct: 0, peakDate: null, troughDate: null };
+  return { data: series, cagr, maxDD: dd.pct * 100, start: startV, end: finalV, ddPeak: dd.peakDate, ddTrough: dd.troughDate };
 }
 
 // Custom strategy series — served from the worker-result cache. On a cache miss
@@ -848,10 +848,10 @@ function computeConfigSeries(cfg, ctx) {
   // #3 Daily-sampled drawdown when we have control points to revalue daily;
   // otherwise fall back to the rebalance-grain series drawdown.
   const dailyRows = (typeof daily !== 'undefined' && daily) ? daily : null;
-  const maxDD = (ddControls && ddControls.length && dailyRows && typeof computeDailyMaxDrawdown === 'function')
-    ? computeDailyMaxDrawdown(ddControls, dailyRows, ddKey) * 100
-    : ((typeof computeMaxDrawdown === 'function') ? computeMaxDrawdown(data) * 100 : 0);
-  return { data, cagr, maxDD, start: startV, end: finalV, subPoints };
+  const dd = (ddControls && ddControls.length && dailyRows && typeof computeDailyMaxDrawdown === 'function')
+    ? computeDailyMaxDrawdown(ddControls, dailyRows, ddKey)
+    : ((typeof computeMaxDrawdown === 'function') ? computeMaxDrawdown(data, labels) : { pct: 0, peakDate: null, troughDate: null });
+  return { data, cagr, maxDD: dd.pct * 100, start: startV, end: finalV, subPoints, ddPeak: dd.peakDate, ddTrough: dd.troughDate };
 }
 
 function fadeColor(hex, a) {
@@ -951,7 +951,7 @@ function appendConfigDatasets(chart, ctx) {
   window._editingConfigSim = null;
   for (const cfg of savedConfigs) {
     const s = computeConfigSeries(cfg, ctx);
-    window._configMetrics[cfg.id] = { cagr: s.cagr, maxDD: s.maxDD, start: s.start, end: s.end };
+    window._configMetrics[cfg.id] = { cagr: s.cagr, maxDD: s.maxDD, start: s.start, end: s.end, ddPeak: s.ddPeak, ddTrough: s.ddTrough };
     chart.data.datasets.push({
       label: cfg.name,
       data: s.data,
@@ -1430,10 +1430,12 @@ function buildConfigPillHtml(cfg) {
     const cagrSign = m.cagr >= 0 ? '+' : '';
     const cagrCls = m.cagr >= 0 ? 'positive' : 'negative';
     const ddStr = Number.isFinite(m.maxDD) ? (m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%') : '';
+    const ddRange = (typeof fmtDDRange === 'function') ? fmtDDRange(m.ddPeak, m.ddTrough) : '';
+    const ddRangeHtml = ddRange ? ` <span class="sc-metric-range">${ddRange}</span>` : '';
     metrics = `
       <div class="sc-metrics">
         <span class="sc-metric"><span class="sc-metric-label">CAGR</span> <span class="sc-metric-value ${cagrCls}">${cagrSign}${m.cagr.toFixed(1)}%</span></span>
-        ${ddStr ? `<span class="sc-metric"><span class="sc-metric-label">DD</span> <span class="sc-metric-value negative">${ddStr}</span></span>` : ''}
+        ${ddStr ? `<span class="sc-metric"><span class="sc-metric-label">DD</span> <span class="sc-metric-value negative">${ddStr}</span>${ddRangeHtml}</span>` : ''}
       </div>`;
   }
   const eyeSvg = hidden
@@ -1773,10 +1775,12 @@ function renderCustomPanelBody(cfgId) {
   if (!err && m && Number.isFinite(m.cagr)) {
     const cagrCls = m.cagr >= 0 ? 'positive' : 'negative';
     const ddStr = Number.isFinite(m.maxDD) ? (m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%') : '—';
+    const ddRange = (typeof fmtDDRange === 'function') ? fmtDDRange(m.ddPeak, m.ddTrough) : '';
+    const ddRangeHtml = ddRange ? `<div class="custom-stat-range">${ddRange}</div>` : '';
     html += `
       <div class="custom-stats">
         <div class="custom-stat"><span>CAGR</span><b class="${cagrCls}">${m.cagr >= 0 ? '+' : ''}${m.cagr.toFixed(1)}%</b></div>
-        <div class="custom-stat"><span>Max DD</span><b class="negative">${ddStr}</b></div>
+        <div class="custom-stat"><span>Max DD</span><b class="negative">${ddStr}</b>${ddRangeHtml}</div>
         <div class="custom-stat"><span>End</span><b>${(typeof fmtFull === 'function') ? fmtFull(m.end || 0) : Math.round(m.end || 0)}</b></div>
       </div>`;
   }

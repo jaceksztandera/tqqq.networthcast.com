@@ -90,10 +90,11 @@ function moneyWeightedCAGR(initial, monthly, annualRaise, startDate, endDate, ye
 //   dailyRows: [{ date, [priceKey]:Number, ... }]  e.g. the global `daily`
 //   priceKey:  daily field to revalue against ('tqqq'|'qqq'|'spy'|'qld'|'qqq5'|'sso'|'spxl')
 function computeDailyMaxDrawdown(controls, dailyRows, priceKey) {
-  if (!controls || !controls.length || !dailyRows || !dailyRows.length) return 0;
+  const empty = { pct: 0, peakDate: null, troughDate: null };
+  if (!controls || !controls.length || !dailyRows || !dailyRows.length) return empty;
   const startDate = controls[0].date;
   const endDate = controls[controls.length - 1].date;
-  let peak = -Infinity, maxDD = 0, ci = 0;
+  let peak = -Infinity, peakDate = null, maxDD = 0, bestPeakDate = null, bestTroughDate = null, ci = 0;
   for (let i = 0; i < dailyRows.length; i++) {
     const row = dailyRows[i];
     if (row.date < startDate) continue;
@@ -104,10 +105,13 @@ function computeDailyMaxDrawdown(controls, dailyRows, priceKey) {
     if (!(px > 0)) continue;
     const v = c.shares * px + c.cash;
     if (!Number.isFinite(v) || v <= 0) continue;
-    if (v > peak) peak = v;
-    if (peak > 0) { const dd = (peak - v) / peak; if (dd > maxDD) maxDD = dd; }
+    if (v > peak) { peak = v; peakDate = row.date; }
+    if (peak > 0) {
+      const dd = (peak - v) / peak;
+      if (dd > maxDD) { maxDD = dd; bestPeakDate = peakDate; bestTroughDate = row.date; }
+    }
   }
-  return maxDD;
+  return { pct: maxDD, peakDate: bestPeakDate, troughDate: bestTroughDate };
 }
 
 // Node test harness export (no-op in the browser).

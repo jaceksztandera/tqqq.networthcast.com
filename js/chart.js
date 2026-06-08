@@ -53,10 +53,13 @@ function buildLegendChipsHtml(indices, opts) {
       let ddRow = '';
       if (m && Number.isFinite(m.maxDD)) {
         const ddStr = m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%';
+        const ddRange = (typeof fmtDDRange === 'function') ? fmtDDRange(m.ddPeak, m.ddTrough) : '';
+        const rangeHtml = ddRange ? `<span class="legend-metric-range">${ddRange}</span>` : '';
         ddRow = `
           <div class="legend-metric-row">
             <span class="legend-metric-label">DD</span>
             <span class="legend-metric-value negative">${ddStr}</span>
+            ${rangeHtml}
           </div>`;
       }
       metricsHtml = `
@@ -368,7 +371,7 @@ function renderStatsGrid(idx) {
     const cfg = getSavedConfigs().find(c => c.id === ecid);
     if (cfg && cfg.type !== 'custom' && PANEL_IDX_BY_KEY[cfg.type] === idx) {
       const cm = (window._configMetrics || {})[ecid];
-      if (cm) m = { cagr: cm.cagr, start: cm.start, end: cm.end, maxDD: cm.maxDD };
+      if (cm) m = { cagr: cm.cagr, start: cm.start, end: cm.end, maxDD: cm.maxDD, ddPeak: cm.ddPeak, ddTrough: cm.ddTrough };
     }
   }
   if (!m) return '';
@@ -376,6 +379,8 @@ function renderStatsGrid(idx) {
   const cagrCls  = m.cagr >= 0 ? 'positive' : 'negative';
   const cagrStr  = Number.isFinite(m.cagr) ? `${cagrSign}${m.cagr.toFixed(1)}%` : '–';
   const ddStr    = Number.isFinite(m.maxDD) && m.maxDD > 0 ? `−${m.maxDD.toFixed(1)}%` : '0.0%';
+  const ddRange  = (typeof fmtDDRange === 'function') ? fmtDDRange(m.ddPeak, m.ddTrough) : '';
+  const ddRangeHtml = ddRange ? `<div class="strategy-stat-range">${ddRange}</div>` : '';
   return `
     <div class="strategy-stats">
       <div class="strategy-stat">
@@ -393,6 +398,7 @@ function renderStatsGrid(idx) {
       <div class="strategy-stat">
         <div class="strategy-stat-label">Max Drawdown</div>
         <div class="strategy-stat-value negative">${ddStr}</div>
+        ${ddRangeHtml}
       </div>
     </div>
   `;
@@ -1157,16 +1163,16 @@ function render() {
   const dailyDDByIdx = {};
   if (dailyRows) {
     const sigCtl = log.map(l => ({ date: l.date, shares: l.price > 0 ? l.tqqqVal / l.price : 0, cash: l.cash }));
-    dailyDDByIdx[0] = computeDailyMaxDrawdown(sigCtl, dailyRows, sigKey) * 100;
+    dailyDDByIdx[0] = computeDailyMaxDrawdown(sigCtl, dailyRows, sigKey);
     dailyDDByIdx[1] = computeDailyMaxDrawdown(
-      log.map(l => ({ date: l.date, shares: l.price > 0 ? l.tqqqVal / l.price : 0, cash: 0 })), dailyRows, sigKey) * 100;
+      log.map(l => ({ date: l.date, shares: l.price > 0 ? l.tqqqVal / l.price : 0, cash: 0 })), dailyRows, sigKey);
     if (bhPicked.series && bhPicked.series.length && bhPicked.series[0].shares != null) {
       dailyDDByIdx[2] = computeDailyMaxDrawdown(
-        bhPicked.series.map(pt => ({ date: pt.date, shares: pt.shares, cash: 0 })), dailyRows, bhKeyName) * 100;
+        bhPicked.series.map(pt => ({ date: pt.date, shares: pt.shares, cash: 0 })), dailyRows, bhKeyName);
     }
     if (smaLog && smaLog.length) {
       dailyDDByIdx[8] = computeDailyMaxDrawdown(
-        smaLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[smaUlCol] || 'qqq') * 100;
+        smaLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[smaUlCol] || 'qqq');
     }
   }
   window._strategyMetrics = {};
@@ -1178,11 +1184,14 @@ function render() {
     const cagrVal = mainCagrIdx[i] !== undefined
       ? mainCagrIdx[i]
       : (years > 0 && start > 0 ? (Math.pow(end / start, 1 / years) - 1) * 100 : 0);
+    const dd = dailyDDByIdx[i] !== undefined ? dailyDDByIdx[i] : computeMaxDrawdown(series, labels);
     window._strategyMetrics[i] = {
       cagr:  cagrVal,
       start,
       end,
-      maxDD: dailyDDByIdx[i] !== undefined ? dailyDDByIdx[i] : computeMaxDrawdown(series) * 100,
+      maxDD:    dd.pct * 100,
+      ddPeak:   dd.peakDate,
+      ddTrough: dd.troughDate,
     };
   }
   // Shared context for saved-config lines (saved-configs.js). They reuse the

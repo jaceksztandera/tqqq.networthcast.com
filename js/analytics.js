@@ -331,23 +331,23 @@ function strategyValueArray(sim, strat) {
   return arr ? arr.map(spec.valueOf) : [];
 }
 
-// Prefix max-drawdown: out[i] = peak-to-trough decline observed across
+// Prefix max-drawdown: out[i] = { pct, peakIdx, troughIdx } observed across
 // series[0..i]. Lets the heatmap answer maxDD per cell in O(1) after one
-// linear pass over the row's full strategy series.
+// linear pass over the row's full strategy series. peakIdx/troughIdx point
+// back into `series` so the cell tooltip can render the date range.
 function computeMaxDDPrefix(series) {
   const out = new Array(series.length);
-  let peak = -Infinity;
-  let maxDD = 0;
+  let peak = -Infinity, peakIdx = -1, maxDD = 0, bestPeakIdx = -1, bestTroughIdx = -1;
   for (let i = 0; i < series.length; i++) {
     const v = series[i];
     if (Number.isFinite(v)) {
-      if (v > peak) peak = v;
+      if (v > peak) { peak = v; peakIdx = i; }
       if (peak > 0) {
         const dd = (peak - v) / peak;
-        if (dd > maxDD) maxDD = dd;
+        if (dd > maxDD) { maxDD = dd; bestPeakIdx = peakIdx; bestTroughIdx = i; }
       }
     }
-    out[i] = maxDD;
+    out[i] = { pct: maxDD, peakIdx: bestPeakIdx, troughIdx: bestTroughIdx };
   }
   return out;
 }
@@ -366,20 +366,31 @@ function strategySeries(sim, strat) {
 }
 
 // Max drawdown of a value series: largest peak-to-trough decline expressed as
-// a positive fraction (e.g. 0.42 = 42%). Returns 0 for monotonically growing
-// series like the cash-only baseline.
-function computeMaxDrawdown(series) {
-  if (!series || series.length < 2) return 0;
-  let peak = -Infinity, maxDD = 0;
-  for (const v of series) {
+// a positive fraction (e.g. 0.42 = 42%). Returns 0/null for monotonically
+// growing series like the cash-only baseline. When `dates` is provided
+// (label-aligned with `series`), also returns peakDate/troughDate so the UI
+// can render the "Sep 2012 – Aug 2014" range that bracketed the drawdown.
+function computeMaxDrawdown(series, dates) {
+  const empty = { pct: 0, peakIdx: -1, troughIdx: -1, peakDate: null, troughDate: null };
+  if (!series || series.length < 2) return empty;
+  let peak = -Infinity, peakIdx = -1, maxDD = 0, bestPeakIdx = -1, bestTroughIdx = -1;
+  for (let i = 0; i < series.length; i++) {
+    const v = series[i];
     if (!Number.isFinite(v)) continue;
-    if (v > peak) peak = v;
+    if (v > peak) { peak = v; peakIdx = i; }
     if (peak > 0) {
       const dd = (peak - v) / peak;
-      if (dd > maxDD) maxDD = dd;
+      if (dd > maxDD) { maxDD = dd; bestPeakIdx = peakIdx; bestTroughIdx = i; }
     }
   }
-  return maxDD;
+  const dateAt = (i) => (dates && i >= 0 && i < dates.length) ? dates[i] : null;
+  return {
+    pct:        maxDD,
+    peakIdx:    bestPeakIdx,
+    troughIdx:  bestTroughIdx,
+    peakDate:   dateAt(bestPeakIdx),
+    troughDate: dateAt(bestTroughIdx),
+  };
 }
 
 // 3 significant figures, with K/M/B suffix. No currency symbol.
@@ -695,7 +706,7 @@ document.addEventListener('change', (e) => {
       const v = +td.dataset.value;
       const sy = +td.dataset.r;
       if (Number.isFinite(v) && v > 0 && Number.isFinite(sy)) {
-        samples.push({ year: sy, value: v, dd: +td.dataset.maxDd });
+        samples.push({ year: sy, value: v, dd: +td.dataset.maxDd, ddPeak: td.dataset.ddPeak || null, ddTrough: td.dataset.ddTrough || null });
       }
     });
     if (samples.length === 0) return false;
@@ -729,6 +740,11 @@ document.addEventListener('change', (e) => {
     const cagrStat = stat(samples.map(s => s.cagr));
     const ddArr    = samples.map(s => Number.isFinite(s.dd) ? s.dd : 0);
     const ddStat   = stat(ddArr);
+    // For Worst/Best DD, find the sample that produced the extreme so we can
+    // show its peak-to-trough date range under the percentage in the header.
+    const byDdAsc  = samples.slice().sort((a, b) => (a.dd || 0) - (b.dd || 0));
+    const bestDdSample  = byDdAsc[0];
+    const worstDdSample = byDdAsc[byDdAsc.length - 1];
     // The starting years that produced the extremes (for "best/worst $" labels).
     const byVal = samples.slice().sort((a, b) => a.value - b.value);
     const worstYear = byVal[0].year, bestYear = byVal[byVal.length - 1].year;
@@ -794,6 +810,11 @@ document.addEventListener('change', (e) => {
     const fmtMoney = (v) => fmtFull(Math.round(v));
     const fmtPct   = (v) => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
     const fmtDD    = (v) => v > 0 ? '−' + (v * 100).toFixed(1) + '%' : '0.0%';
+    const fmtDDWithRange = (v, s) => {
+      const main = fmtDD(v);
+      const range = (s && typeof fmtDDRange === 'function') ? fmtDDRange(s.ddPeak, s.ddTrough) : '';
+      return range ? `${main}<span class="tt-hdr-stat-range">${range}</span>` : main;
+    };
 
     tooltip.innerHTML = `
       <button class="tt-close" type="button" aria-label="Close" data-tt-close>&times;</button>
@@ -819,8 +840,8 @@ document.addEventListener('change', (e) => {
           <span class="tt-hdr-stat-label">Drawdown</span>
           <span class="tt-hdr-stat-cell"><span>Median</span><b>${fmtDD(ddStat.median)}</b></span>
           <span class="tt-hdr-stat-cell"><span>Mean</span><b>${fmtDD(ddStat.mean)}</b></span>
-          <span class="tt-hdr-stat-cell"><span>Worst</span><b>${fmtDD(ddStat.max)}</b></span>
-          <span class="tt-hdr-stat-cell"><span>Best</span><b>${fmtDD(ddStat.min)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Worst</span><b>${fmtDDWithRange(ddStat.max, worstDdSample)}</b></span>
+          <span class="tt-hdr-stat-cell"><span>Best</span><b>${fmtDDWithRange(ddStat.min, bestDdSample)}</b></span>
         </div>
       </div>
       <div class="tt-decile-title">Median final $ if your start year landed in&hellip;</div>
@@ -836,6 +857,8 @@ document.addEventListener('change', (e) => {
     const value     = +td.dataset.value;
     const derived   = +td.dataset.derived;
     const maxDD     = +td.dataset.maxDd;
+    const ddPeak    = td.dataset.ddPeak   || null;
+    const ddTrough  = td.dataset.ddTrough || null;
     const stratLabel = analyticsKeyLabel(analyticsStrategy);
 
     // Run (or reuse cached) simulate() for this exact (startYear, period)
@@ -869,12 +892,14 @@ document.addEventListener('change', (e) => {
       }
     }
     const ddStr = Number.isFinite(maxDD) && maxDD > 0 ? '−' + (maxDD * 100).toFixed(1) + '%' : '0.0%';
+    const ddRange = (typeof fmtDDRange === 'function') ? fmtDDRange(ddPeak, ddTrough) : '';
+    const ddRangeHtml = ddRange ? ` <span class="tt-dd-range">${ddRange}</span>` : '';
 
     tooltip.innerHTML = `
       <button class="tt-close" type="button" aria-label="Close" data-tt-close>&times;</button>
       <div class="tt-period">
         <span>${escA(stratLabel)} &middot; INVESTED ${startYear} &middot; ${period}Y</span>
-        <span class="tt-dd">DD ${ddStr}</span>
+        <span class="tt-dd">DD ${ddStr}${ddRangeHtml}</span>
       </div>
       <div class="tt-strat">${fmtFull(Math.round(value))} <span style="color:var(--text-muted);font-size:11px;font-weight:500">(ended ${endYear})</span></div>
       ${lineChart}
@@ -2368,7 +2393,10 @@ async function buildHeatmap() {
       c.value   = stratSeries[offset] || 0;
       const baseline = baseSeries[offset] || 0;
       c.derived = baseline > 0 && c.value > 0 ? c.value / baseline : 0;
-      c.maxDD   = ddPrefix[offset] || 0;
+      const ddInfo = ddPrefix[offset] || { pct: 0, peakIdx: -1, troughIdx: -1 };
+      c.maxDD     = ddInfo.pct;
+      c.ddPeak    = (ddInfo.peakIdx   >= 0 && rowDates[ddInfo.peakIdx])   || null;
+      c.ddTrough  = (ddInfo.troughIdx >= 0 && rowDates[ddInfo.troughIdx]) || null;
 
       const td = cellRefs.get(c.year + ':' + c.period);
       if (td) {
@@ -2378,6 +2406,8 @@ async function buildHeatmap() {
         td.dataset.derived = String(c.derived);
         td.dataset.endYear = String(endYear);
         td.dataset.maxDd   = String(c.maxDD);
+        td.dataset.ddPeak   = c.ddPeak   || '';
+        td.dataset.ddTrough = c.ddTrough || '';
       }
       processed++;
     }

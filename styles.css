@@ -1095,6 +1095,22 @@
     letter-spacing: 0;
     white-space: nowrap;
   }
+  .heatmap-tooltip .tt-dd-range {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+  .heatmap-tooltip .tt-hdr-stat-range {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    white-space: nowrap;
+  }
 
   /* Column-header tooltip: per-horizon stats grid + decile bar chart. */
   .heatmap-tooltip .tt-hdr-stats {
@@ -1364,6 +1380,13 @@
   }
   .legend-chip .legend-metric-value.positive { color: var(--green); }
   .legend-chip .legend-metric-value.negative { color: var(--red); }
+  .legend-chip .legend-metric-range {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-left: 2px;
+    white-space: nowrap;
+  }
   .legend-chip.legend-hidden {
     opacity: 0.15;
     background: rgba(30, 42, 63, 0.15);
@@ -1541,6 +1564,8 @@
     display: inline-flex;
     gap: 4px;
     align-items: baseline;
+    flex-wrap: wrap;
+    max-width: 100%;
   }
   .saved-config-pill .sc-metric-label {
     font-size: 8px;
@@ -1556,6 +1581,14 @@
   }
   .saved-config-pill .sc-metric-value.positive { color: var(--green); }
   .saved-config-pill .sc-metric-value.negative { color: var(--red); }
+  .saved-config-pill .sc-metric-range {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-basis: 100%;
+    margin-top: 1px;
+  }
   .saved-config-pill.is-hidden { opacity: 0.4; }
   .saved-config-pill.is-hidden .sc-name {
     text-decoration: line-through;
@@ -1868,6 +1901,13 @@
   .custom-stat b { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text); }
   .custom-stat b.positive { color: var(--green); }
   .custom-stat b.negative { color: var(--red); }
+  .custom-stat-range {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    white-space: nowrap;
+  }
   .custom-params { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
   .custom-param-row {
     display: flex;
@@ -2293,6 +2333,13 @@
     font-size: 14px;
     font-weight: 600;
     color: var(--text);
+  }
+  .strategy-stat-range {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
   }
   .strategy-stat-value.positive { color: var(--green); }
   .strategy-stat-value.negative { color: var(--red); }

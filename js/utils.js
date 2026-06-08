@@ -14,6 +14,36 @@ function qLabel(dateStr) {
 // in late September). Works the same way for weekly/monthly/yearly: end
 // of one period → "first day of the next".
 const _LOG_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// "YYYY-MM-DD" → "Sep 2012". Kept for callers that want month/year resolution.
+function fmtMonthYear(dateStr) {
+  if (!dateStr || dateStr.length < 7) return '';
+  const y = dateStr.substring(0, 4);
+  const m = parseInt(dateStr.substring(5, 7), 10);
+  if (!(m >= 1 && m <= 12)) return y;
+  return _LOG_MONTHS[m - 1] + ' ' + y;
+}
+
+// "YYYY-MM-DD" → "12 Feb 2023". Used by fmtDDRange so the drawdown label
+// pinpoints the exact peak/trough day (every path that feeds it has daily or
+// at worst rebalance-end-day precision — never a smearing).
+function fmtDayMonthYear(dateStr) {
+  if (!dateStr || dateStr.length < 10) return fmtMonthYear(dateStr);
+  const y = dateStr.substring(0, 4);
+  const m = parseInt(dateStr.substring(5, 7), 10);
+  const d = parseInt(dateStr.substring(8, 10), 10);
+  if (!(m >= 1 && m <= 12) || !(d >= 1 && d <= 31)) return fmtMonthYear(dateStr);
+  return d + ' ' + _LOG_MONTHS[m - 1] + ' ' + y;
+}
+
+// Peak-to-trough date range for a drawdown label, e.g. "12 Feb 2023–4 Jun 2024".
+// Returns '' if either date is missing (so callers can append without nesting).
+function fmtDDRange(peakDate, troughDate) {
+  if (!peakDate || !troughDate) return '';
+  const a = fmtDayMonthYear(peakDate), b = fmtDayMonthYear(troughDate);
+  if (!a || !b) return '';
+  return a === b ? a : a + '–' + b;
+}
 function fmtLogDate(dateStr) {
   if (!dateStr || dateStr.length < 10) return dateStr || '';
   // UTC-anchored to avoid DST quirks shifting the day.

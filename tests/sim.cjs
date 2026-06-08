@@ -8,11 +8,21 @@
 const fs = require('fs');
 const sim = fs.readFileSync(__dirname + '/../js/simulate.js', 'utf8');
 global.fmt = (n) => String(Math.round(n));
-global.computeMaxDrawdown = function (s) {
-  if (!s || s.length < 2) return 0;
-  let p = -Infinity, m = 0;
-  for (const v of s) { if (!Number.isFinite(v)) continue; if (v > p) p = v; if (p > 0) { const d = (p - v) / p; if (d > m) m = d; } }
-  return m;
+global.computeMaxDrawdown = function (s, dates) {
+  const empty = { pct: 0, peakIdx: -1, troughIdx: -1, peakDate: null, troughDate: null };
+  if (!s || s.length < 2) return empty;
+  let peak = -Infinity, peakIdx = -1, maxDD = 0, bestPeakIdx = -1, bestTroughIdx = -1;
+  for (let i = 0; i < s.length; i++) {
+    const v = s[i];
+    if (!Number.isFinite(v)) continue;
+    if (v > peak) { peak = v; peakIdx = i; }
+    if (peak > 0) {
+      const dd = (peak - v) / peak;
+      if (dd > maxDD) { maxDD = dd; bestPeakIdx = peakIdx; bestTroughIdx = i; }
+    }
+  }
+  const dateAt = (i) => (dates && i >= 0 && i < dates.length) ? dates[i] : null;
+  return { pct: maxDD, peakIdx: bestPeakIdx, troughIdx: bestTroughIdx, peakDate: dateAt(bestPeakIdx), troughDate: dateAt(bestTroughIdx) };
 };
 
 const MONTHS = ['2020-01-31','2020-02-29','2020-03-31','2020-04-30','2020-05-31','2020-06-30','2020-07-31','2020-08-31','2020-09-30','2020-10-31','2020-11-30','2020-12-31','2021-01-31','2021-02-28','2021-03-31','2021-04-30','2021-05-31','2021-06-30','2021-07-31','2021-08-31','2021-09-30','2021-10-31','2021-11-30','2021-12-31'];
@@ -84,8 +94,25 @@ r = simulate(1000, 100, 0, 0, last, 0.10, {});
 ck('totalContributed honors annual raise (9*100 + 12*110)', r.totalContributed === 1000 + 9 * 100 + 12 * 110);
 
 // ----- drawdown -----
-ck('drawdown [100,150,75,120] = 0.5', approx(computeMaxDrawdown([100, 150, 75, 120]), 0.5));
-ck('drawdown monotonic-up = 0', computeMaxDrawdown([100, 110, 120]) === 0);
+ck('drawdown [100,150,75,120] = 0.5', approx(computeMaxDrawdown([100, 150, 75, 120]).pct, 0.5));
+ck('drawdown monotonic-up = 0', computeMaxDrawdown([100, 110, 120]).pct === 0);
+// Drawdown range tracks the peak (idx 1) → trough (idx 2) bracket and resolves dates when provided.
+(function () {
+  const r = computeMaxDrawdown([100, 150, 75, 120], ['2020-01-31', '2020-02-29', '2020-03-31', '2020-04-30']);
+  ck('drawdown range: peakIdx = 1 (peak 150)', r.peakIdx === 1, 'got ' + r.peakIdx);
+  ck('drawdown range: troughIdx = 2 (trough 75)', r.troughIdx === 2, 'got ' + r.troughIdx);
+  ck('drawdown range: peakDate resolved', r.peakDate === '2020-02-29', 'got ' + r.peakDate);
+  ck('drawdown range: troughDate resolved', r.troughDate === '2020-03-31', 'got ' + r.troughDate);
+  // After a new high (180), a deeper second drawdown supersedes the first; range moves to the new peak/trough.
+  const r2 = computeMaxDrawdown([100, 150, 75, 180, 60], ['a', 'b', 'c', 'd', 'e']);
+  ck('drawdown range: second deeper trough wins (peak=d, trough=e)',
+     r2.peakDate === 'd' && r2.troughDate === 'e',
+     'got peak=' + r2.peakDate + ' trough=' + r2.troughDate);
+  // No dates → null peak/trough date (still computes pct).
+  const r3 = computeMaxDrawdown([100, 50]);
+  ck('drawdown range: no dates → null date fields, pct still set',
+     r3.pct === 0.5 && r3.peakDate === null && r3.troughDate === null);
+})();
 
 // ----- SMA -----
 install(flat); global.smaAtMonthlyByKey = { 'qqq_200': new Array(24).fill(1) };
@@ -229,25 +256,33 @@ const dly = (arr, key) => arr.map(([date, px]) => ({ date, [key]: px }));
 // points bracket the path (first + last rebalance), as real strategies always do.
 ck('dailyDD: pure holding 100→150→75 = 50%',
    approx(computeDailyMaxDrawdown([{ date: '2020-01-01', shares: 1, cash: 0 }, { date: '2020-01-03', shares: 1, cash: 0 }],
-     dly([['2020-01-01', 100], ['2020-01-02', 150], ['2020-01-03', 75]], 'tqqq'), 'tqqq'), 0.5, 1e-9));
+     dly([['2020-01-01', 100], ['2020-01-02', 150], ['2020-01-03', 75]], 'tqqq'), 'tqqq').pct, 0.5, 1e-9));
+// Daily DD also reports the peak/trough DATES so the UI can render "Jan 2020 – Mar 2020".
+(function () {
+  const r = computeDailyMaxDrawdown(
+    [{ date: '2020-01-01', shares: 1, cash: 0 }, { date: '2020-01-03', shares: 1, cash: 0 }],
+    dly([['2020-01-01', 100], ['2020-01-02', 150], ['2020-01-03', 75]], 'tqqq'), 'tqqq');
+  ck('dailyDD range: peakDate = 2020-01-02', r.peakDate === '2020-01-02', 'got ' + r.peakDate);
+  ck('dailyDD range: troughDate = 2020-01-03', r.troughDate === '2020-01-03', 'got ' + r.troughDate);
+})();
 // Daily sampling catches an intra-period crash that the rebalance-grain points miss.
 // Two control points both at value 100 (flat at the "rebalances"), but the price
 // dives 40% mid-way → daily DD = 40%.
 ck('dailyDD: catches intra-period crash the period grain misses (40%)',
    approx(computeDailyMaxDrawdown(
      [{ date: '2020-01-01', shares: 1, cash: 0 }, { date: '2020-01-05', shares: 1, cash: 0 }],
-     dly([['2020-01-01', 100], ['2020-01-02', 60], ['2020-01-03', 90], ['2020-01-05', 100]], 'tqqq'), 'tqqq'), 0.4, 1e-9));
+     dly([['2020-01-01', 100], ['2020-01-02', 60], ['2020-01-03', 90], ['2020-01-05', 100]], 'tqqq'), 'tqqq').pct, 0.4, 1e-9));
 // Cash cushions the drawdown: 1 share + 100 cash, price 100→50 → value 200→150 = 25%.
 ck('dailyDD: cash cushions drawdown (25% not 50%)',
    approx(computeDailyMaxDrawdown([{ date: '2020-01-01', shares: 1, cash: 100 }, { date: '2020-01-02', shares: 1, cash: 100 }],
-     dly([['2020-01-01', 100], ['2020-01-02', 50]], 'tqqq'), 'tqqq'), 0.25, 1e-9));
+     dly([['2020-01-01', 100], ['2020-01-02', 50]], 'tqqq'), 'tqqq').pct, 0.25, 1e-9));
 // Daily DD >= period-grain DD for a volatile holding (it can only find MORE drawdown).
 (function () {
   const ctrl = [{ date: '2020-01-01', shares: 1, cash: 0 }, { date: '2020-01-31', shares: 1, cash: 0 }];
   const prices = [['2020-01-01', 100], ['2020-01-10', 40], ['2020-01-20', 70], ['2020-01-31', 120]];
-  const ddDaily = computeDailyMaxDrawdown(ctrl, dly(prices, 'tqqq'), 'tqqq');
+  const ddDaily = computeDailyMaxDrawdown(ctrl, dly(prices, 'tqqq'), 'tqqq').pct;
   const periodSeries = ctrl.map(c => c.shares * prices.find(p => p[0] === c.date)[1] + c.cash); // [100, 120]
-  const ddPeriod = computeMaxDrawdown(periodSeries);
+  const ddPeriod = computeMaxDrawdown(periodSeries).pct;
   ck('dailyDD >= period-grain DD for volatile holding', ddDaily >= ddPeriod && ddDaily > 0.5, 'daily ' + ddDaily.toFixed(3) + ' period ' + ddPeriod.toFixed(3));
 })();
 
