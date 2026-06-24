@@ -25,6 +25,8 @@ const CONFIG_PARAM_IDS = {
            'select-sma-rsi-oh', 'select-sma-rsi-cool',
            'select-sma-out-asset', 'select-sma-dca-in', 'select-sma-dca-to-out',
            'select-sma-bg-delev', 'select-sma-bg-gtfo'],
+  'fixed': ['select-fixed-stock', 'select-fixed-underlying', 'select-fixed-period',
+             'select-fixed-cashrate'],
   'bh':   ['select-bh-underlying'],
   'invested': ['slider-rate'],
 };
@@ -67,8 +69,8 @@ function getSavedConfigs() { return savedConfigs; }
 // Saved strategies store their colour on the config (cfg.color). Base
 // strategies are canonical, so their colour override is SESSION-ONLY — it's
 // kept in memory but never persisted, so a refresh restores the default hue.
-const DEFAULT_BASE_COLORS = { '9sig': '#22d3ee', 'bh': '#f87171', 'invested': '#e2e8f0', 'sma': '#a3e635' };
-const BASE_COLOR_DATASET_IDX = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8 };
+const DEFAULT_BASE_COLORS = { '9sig': '#22d3ee', 'bh': '#f87171', 'invested': '#e2e8f0', 'sma': '#a3e635', 'fixed': '#c084fc' };
+const BASE_COLOR_DATASET_IDX = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8, 'fixed': 13 };
 window._lineColorOverrides = {};
 function getBaseColor(type) {
   const ov = window._lineColorOverrides || {};
@@ -475,7 +477,7 @@ function buildCustomPrompt(desc) {
 let _customDataCache = null;
 function buildCustomData() {
   if (_customDataCache) return _customDataCache;
-  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], qqq5: [], sso: [], spxl: [] };
+  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], qqq5: [], sso: [], spxl: [], jepq: [] };
   _customDataCache = {
     dates: daily.map(d => d.date),
     tqqq:  daily.map(d => d.tqqq),
@@ -485,6 +487,7 @@ function buildCustomData() {
     qqq5:  daily.map(d => d.qqq5),
     sso:   daily.map(d => d.sso),
     spxl:  daily.map(d => d.spxl),
+    jepq:  daily.map(d => d.jepq),
   };
   return _customDataCache;
 }
@@ -756,7 +759,7 @@ function computeCustomSeries(cfg, ctx) {
 // Run the right engine for a config and return its label-aligned series + stats.
 function computeConfigSeries(cfg, ctx) {
   if (cfg.type === 'custom') return computeCustomSeries(cfg, ctx);
-  const { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels, years, totalContributed } = ctx;
+  const { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels, years, totalContributed, taxRate } = ctx;
   const p = cfg.params || {};
   let points = null;
   let subPoints = null; // 9sig Holding/Target/Cash breakdown (for its sub-series)
@@ -772,6 +775,7 @@ function computeConfigSeries(cfg, ctx) {
     const opts = {
       qGrowth: (+pget(p, 'select-9sig-growth', 9)) / 100 || 0.09,
       underlyingCol: ulColFromVal(pget(p, 'select-9sig-underlying', 'tqqq')),
+      taxRate: taxRate || 0,
       crashDropPct: Number.isFinite(cd) ? cd : 30,
       crashLookbackMonths: +pget(p, 'select-9sig-crashwin', 24) || 24,
       spikeTriggerPct: Number.isFinite(sp) ? sp : 100,
@@ -785,7 +789,7 @@ function computeConfigSeries(cfg, ctx) {
     // A yearly config is coarser than the chart's quarterly axis floor → get
     // quarter-end value snapshots so its line/sub-series draw at quarter detail.
     opts.sampleQuarterly = (opts.rebalancePeriod === 'yearly');
-    const cashRate = (+pget(p, 'select-9sig-cashrate', 4) || 0) / 100;
+    const cashRate = (+pget(p, 'select-9sig-cashrate', 3.14) || 0) / 100;
     const r = simulate(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, opts);
     const seriesRows = (r.samplePoints && r.samplePoints.length) ? r.samplePoints : (r.log || []);
     points = seriesRows.map(l => ({ date: l.date, value: l.total }));
@@ -802,6 +806,7 @@ function computeConfigSeries(cfg, ctx) {
       smaAsset: pget(p, 'select-sma-asset', 'qqq') || 'qqq',
       smaWindow: +pget(p, 'select-sma-window', 200) || 200,
       underlyingCol: ulColFromVal(pget(p, 'select-sma-underlying', 'tqqq')),
+      taxRate: taxRate || 0,
       entryBufferPct: +pget(p, 'select-sma-entry-buf', 0) || 0,
       exitBufferPct: +pget(p, 'select-sma-exit-buf', 0) || 0,
       rsiOverheatThreshold: +pget(p, 'select-sma-rsi-oh', 0) || 0,
@@ -812,12 +817,25 @@ function computeConfigSeries(cfg, ctx) {
       bgDelevPct: +pget(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +pget(p, 'select-sma-bg-gtfo', 0) || 0,
     };
-    const cashRate = (+pget(p, 'select-sma-cashrate', 4) || 0) / 100;
+    const cashRate = (+pget(p, 'select-sma-cashrate', 3.14) || 0) / 100;
     const r = simulateSMA(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, opts);
     points = (r.smaPoints || []).map(pt => ({ date: pt.date, value: pt.value }));
     ddControls = (r.smaLog || []).map(row => ({ date: row.date, shares: row.shares, cash: row.cash }));
     ddKey = UL_KEY[opts.underlyingCol] || 'qqq';
     if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: 'sma', smaLog: r.smaLog, smaPoints: r.smaPoints };
+  } else if (cfg.type === 'fixed') {
+    const opts = {
+      underlyingCol: ulColFromVal(pget(p, 'select-fixed-underlying', 'tqqq')),
+      taxRate: taxRate || 0,
+      stockPct: +pget(p, 'select-fixed-stock', 75) || 75,
+      rebalancePeriod: pget(p, 'select-fixed-period', 'quarterly') || 'quarterly',
+    };
+    const cashRate = (+pget(p, 'select-fixed-cashrate', 3.14) || 0) / 100;
+    const r = simulateFixedSplit(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, opts);
+    points = (r.fixedPoints || []).map(pt => ({ date: pt.date, value: pt.value }));
+    ddControls = (r.log || []).map(row => ({ date: row.date, shares: row.shares, cash: row.cash }));
+    ddKey = UL_KEY[opts.underlyingCol] || 'tqqq';
+    if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: 'fixed', fixedLog: r.log };
   } else if (cfg.type === 'bh') {
     const r = simulate(initial, monthly, 0, simEntryIdx, exitIdx, annualRaise, {});
     const key = pget(p, 'select-bh-underlying', 'tqqq');
@@ -890,7 +908,7 @@ function computeConfigGhosts(cfg, ctx) {
   if (!cfg.showEnvelope) return [];
   if (typeof simulate !== 'function' || typeof buildEnvelopeShifts !== 'function'
       || typeof getShiftedPeriodData !== 'function') return [];
-  const { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels } = ctx;
+  const { initial, monthly, annualRaise, simEntryIdx, exitIdx, labels, taxRate } = ctx;
   const p = cfg.params || {};
   const period = pget(p, 'select-9sig-period', 'quarterly') || 'quarterly';
   // Lazily build (and memoize, reusing data.js's cache) the period's shifts.
@@ -908,6 +926,7 @@ function computeConfigGhosts(cfg, ctx) {
   const sigParams = {
     qGrowth: (+pget(p, 'select-9sig-growth', 9)) / 100 || 0.09,
     underlyingCol: ulColFromVal(pget(p, 'select-9sig-underlying', 'tqqq')),
+    taxRate: taxRate || 0,
     crashDropPct: Number.isFinite(cd) ? cd : 30,
     crashLookbackMonths: +pget(p, 'select-9sig-crashwin', 24) || 24,
     spikeTriggerPct: Number.isFinite(sp) ? sp : 100,
@@ -917,7 +936,8 @@ function computeConfigGhosts(cfg, ctx) {
     buyThrottlePct: +pget(p, 'select-9sig-buypower', 90) || 90,
     parkAsset: pget(p, 'select-9sig-park-asset', 'cash') || 'cash',
   };
-  const cashRate = (+pget(p, 'select-9sig-cashrate', 4) || 0) / 100;
+  const cashRate = (+pget(p, 'select-9sig-cashrate', 3.14) || 0) / 100;
+  const sampleQuarterly = (period === 'yearly'); // quarter-detail ghosts for a yearly config
   // Build a per-ghost qData anchored at the chart's entry date. Each ghost
   // rebalances at entry + dayOffset, then every `period_days` after. We pass
   // the canonical entryIdx/exitIdx so simulate()'s yearly entry-remap finds
@@ -930,8 +950,8 @@ function computeConfigGhosts(cfg, ctx) {
       ? buildEnvelopeQData(period, dayShift, entryDate, exitDate)
       : null;
     if (!qData || qData.length < 2) return labels.map(() => null);
-    const r = simulate(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, { ...sigParams, qData, skipBH: true });
-    const rows = r.log || [];
+    const r = simulate(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, { ...sigParams, qData, skipBH: true, sampleQuarterly });
+    const rows = (r.samplePoints && r.samplePoints.length) ? r.samplePoints : (r.log || []);
     return resampleByDate(rows.map(l => ({ date: l.date, value: l.total })), labels);
   });
 }
@@ -1007,7 +1027,7 @@ function appendConfigDatasets(chart, ctx) {
 // --- naming -------------------------------------------------------------
 // Default names are PLAIN type labels — they don't encode (or track) the
 // strategy's parameters. The user can rename a saved strategy to anything.
-const BASE_LABELS = { '9sig': '9sig', 'sma': 'SMA', 'bh': 'Buy & Hold', 'invested': 'Invested Compounded', 'custom': 'Custom strategy' };
+const BASE_LABELS = { '9sig': '9sig', 'sma': 'SMA', 'fixed': 'Fixed Split', 'bh': 'Buy & Hold', 'invested': 'Invested Compounded', 'custom': 'Custom strategy' };
 function genBaseName(type) {
   return BASE_LABELS[type] || type;
 }
@@ -1150,6 +1170,7 @@ function resetBaseControlsToCanonical(type) {
   applyParams(type, captureDefaultParams(type));
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans === 'function') update9sigCashSpans();
+  if (typeof updateFixedCashSpan === 'function') updateFixedCashSpan();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   if (typeof window.refreshPreviewTriggers === 'function') window.refreshPreviewTriggers();
 }
@@ -1349,6 +1370,7 @@ function openConfigForEdit(id) {
   applyParams(cfg.type, cfg.params);
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans === 'function') update9sigCashSpans();
+  if (typeof updateFixedCashSpan === 'function') updateFixedCashSpan();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   if (typeof saveSliders === 'function') saveSliders();
   window._editingConfigId = id;

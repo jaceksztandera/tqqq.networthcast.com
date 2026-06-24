@@ -71,6 +71,10 @@ const STRATEGY_REGISTRY = {
                  }
                  return minQ;
                } },
+  'fixed':     { label: 'Fixed Split',    pointsKey: 'fixedPoints', valueOf: (p) => p.value, prependStart: false,
+               earliestQIdxFn: () => _earliestQIdxForUnderlyingSelect('select-fixed-underlying') },
+  'tqqq-jepq': { label: 'TQQQ/JEPQ 50/50', pointsKey: 'tqqjPoints', valueOf: (p) => p.value, prependStart: false,
+                 labelFn: () => { const ul = ((document.getElementById('select-tqqj-underlying') || {}).value || 'tqqq').toUpperCase(); return `${ul}/JEPQ`; } },
 };
 
 // Earliest quarterly index where each strategy has usable history. Computed
@@ -141,7 +145,9 @@ const STRATEGY_KEY_TO_DATASET_IDX = {
   'bh-qqq5': 9,
   'bh-qld':  10,
   'bh-sso':  11,
-  'bh-spxl': 12, // envelope shifts start at 13
+  'bh-spxl': 12,
+  'fixed':      13,
+  'tqqq-jepq':  14, // envelope shifts start at 15
 };
 
 // Reverse map. Cheap to build at module load.
@@ -238,6 +244,7 @@ function _visibleBuiltinStrategies() {
     ['9sig',        analyticsKeyLabel('9sig')],
     ['bh-' + bhUL,  'B&H ' + bhUL.toUpperCase()],
     ['sma',         'SMA'],
+    ['fixed',    'Fixed Split'],
   ];
 }
 
@@ -1066,9 +1073,13 @@ const STRATEGY_METRIC_DEFS = {
   ns: { label: 'Spike',      elementId: 'select-9sig-spike',     fmt: x => x === 0 ? 'off' : `+${x}%/q`, kind: 'number' },
   np: { label: 'Rebalance',  elementId: 'select-9sig-period',    fmt: v => String(v),                    kind: 'string' },
   nh: { label: 'Cash %',     elementId: 'select-9sig-cash',      fmt: x => `${x}%`,                      kind: 'number' },
-  nr: { label: 'Cash rate',  elementId: 'select-9sig-cashrate',  fmt: x => `${x.toFixed(1)}%`,            kind: 'number' },
+  nr: { label: 'Cash rate',  elementId: 'select-9sig-cashrate',  fmt: x => `${x.toFixed(2)}%`,            kind: 'number' },
   nbp:{ label: 'Buy power',  elementId: 'select-9sig-buypower',  fmt: x => `${x}%`,                       kind: 'number' },
   npa:{ label: 'Park as',    elementId: 'select-9sig-park-asset', fmt: v => String(v).toUpperCase(),       kind: 'string' },
+  fs: { label: 'Stock',      elementId: 'select-fixed-stock',     fmt: x => `${x}%`,                      kind: 'number' },
+  fu: { label: 'Holds',      elementId: 'select-fixed-underlying',fmt: v => String(v).toUpperCase(),      kind: 'string' },
+  fp: { label: 'Rebalance',  elementId: 'select-fixed-period',    fmt: v => String(v),                    kind: 'string' },
+  fr: { label: 'Cash rate',  elementId: 'select-fixed-cashrate',  fmt: x => `${x.toFixed(2)}%`,           kind: 'number' },
 };
 
 // Which metric keys each strategy exposes in the analytics settings bar.
@@ -1077,6 +1088,7 @@ const STRATEGY_METRIC_DEFS = {
 const STRATEGY_METRICS = {
   '9sig': ['nu', 'ng', 'np', 'nh', 'nr', 'nc', 'ncw', 'ns', 'nbp', 'npa'],
   'sma':  ['su', 'sa', 'sw', 'scr', 'seb', 'sxb', 'sro', 'src', 'soa', 'sdi', 'sdo', 'sbd', 'sbg'],
+  'fixed': ['fs', 'fu', 'fp', 'fr'],
 };
 
 function metricSelect(key, label, current, fmt, dim) {
@@ -1251,6 +1263,17 @@ function showSpiralTooltip(tooltip, e, d, threshold) {
   positionSpiralTooltip(tooltip, e);
 }
 
+// Map a strategy to the underlying asset whose price drives the spiral's
+// year-over-year comparison.
+const SPIRAL_ASSET_FOR_STRATEGY = {
+  'bh-spy':   'spy',
+  'bh-qqq':   'qqq',
+  'bh-tqqq':  'tqqq',
+  'sma':  'tqqq',
+  '9sig': 'tqqq',
+  'fixed': 'tqqq',
+};
+
 // Extract the strategy's quarterly (date, value) pairs from a simulate()
 // result. Used by the spiral to get per-year portfolio values.
 //
@@ -1284,7 +1307,7 @@ function strategyDateValues(sim, strat) {
 // 'custom-pct' (per-cell flat target derived from prior cell × (1+pct)).
 function baselineDateValues(sim, key, cellBaselineVal, stratSeries) {
   if (!sim) return [];
-  if (key === '9sig' || key === 'bh-tqqq' || key === 'bh-qld' || key === 'bh-qqq' || key === 'bh-spy' || key === 'bh-qqq5' || key === 'bh-sso' || key === 'bh-spxl' || key === 'sma') {
+  if (STRATEGY_REGISTRY[key]) {
     return strategyDateValues(sim, key);
   }
   if (key === 'compounded') {
@@ -1337,11 +1360,16 @@ function _underlyingAndGrowth() {
   const targetFromPrevTarget = !!((document.getElementById('select-9sig-target-compound') || {}).checked);
   const nineSigCashRate = (+((document.getElementById('select-9sig-cashrate') || {}).value) || 0) / 100;
   const smaCashRate     = (+((document.getElementById('select-sma-cashrate')  || {}).value) || 0) / 100;
+  const fixedCashRate   = (+((document.getElementById('select-fixed-cashrate') || {}).value) || 0) / 100;
   const buyThrottlePct  = (+((document.getElementById('select-9sig-buypower') || {}).value) || 90);
   const parkAsset = ((document.getElementById('select-9sig-park-asset') || {}).value) || 'cash';
+  const taxRate = ((document.getElementById('checkbox-taxable') || {}).checked)
+    ? ((+((document.getElementById('slider-tax') || {}).value) || 0) / 100)
+    : 0;
   return {
     sigUlCol: ulSel('select-9sig-underlying'),
     smaUlCol: ulSel('select-sma-underlying'),
+    fixedUlCol: ulSel('select-fixed-underlying'),
     qGrowth:  +((document.getElementById('select-9sig-growth') || {}).value) / 100 || 0.09,
     crashDropPct:   Number.isFinite(cd) ? cd : 30,
     crashLookbackMonths: Number.isFinite(cw) ? cw : 24,
@@ -1352,8 +1380,13 @@ function _underlyingAndGrowth() {
     targetFromPrevTarget,
     buyThrottlePct,
     parkAsset,
+    taxRate,
+    parkAsset,
     nineSigCashRate,
     smaCashRate,
+    fixedCashRate,
+    fixedStockPct: +((document.getElementById('select-fixed-stock') || {}).value) || 75,
+    fixedRebalancePeriod: ((document.getElementById('select-fixed-period') || {}).value) || 'quarterly',
   };
 }
 
@@ -1364,11 +1397,12 @@ function _underlyingAndGrowth() {
 function _smaParamsForAnalytics() {
   const usesSMA = (analyticsStrategy === 'sma' || analyticsBaseline === 'sma');
   if (!usesSMA) return null;
-  const { smaUlCol } = _underlyingAndGrowth();
+  const { smaUlCol, taxRate } = _underlyingAndGrowth();
   return {
     smaAsset:      (document.getElementById('select-sma-asset')  || {}).value || 'qqq',
     smaWindow:     +((document.getElementById('select-sma-window') || {}).value) || 200,
     underlyingCol: smaUlCol,
+    taxRate,
     entryBufferPct:       +((document.getElementById('select-sma-entry-buf') || {}).value) || 0,
     exitBufferPct:        +((document.getElementById('select-sma-exit-buf')  || {}).value) || 0,
     rsiOverheatThreshold: +((document.getElementById('select-sma-rsi-oh')   || {}).value) || 0,
@@ -1387,9 +1421,17 @@ function _runAnalyticsSim(initial, monthly, rate, entryIdx, exitIdx, annualRaise
   // `rate` here is the Invested Compounded baseline rate; 9sig and SMA each
   // use their own parked-cash rate (mirrors chart.js render()).
   const _ug = _underlyingAndGrowth();
-  const { sigUlCol, qGrowth, crashDropPct, crashLookbackMonths, spikeTriggerPct, rebalancePeriod, cashPct, contribDeployPct, targetFromPrevTarget, buyThrottlePct, parkAsset, nineSigCashRate, smaCashRate } = _ug;
-  opts = Object.assign({ underlyingCol: sigUlCol, qGrowth, crashDropPct, crashLookbackMonths, spikeTriggerPct, rebalancePeriod, cashPct, contribDeployPct, targetFromPrevTarget, buyThrottlePct, parkAsset, baselineRate: rate }, opts);
+  const { sigUlCol, qGrowth, crashDropPct, crashLookbackMonths, spikeTriggerPct, rebalancePeriod, cashPct, contribDeployPct, targetFromPrevTarget, buyThrottlePct, taxRate, parkAsset, nineSigCashRate, smaCashRate, fixedUlCol, fixedCashRate, fixedStockPct, fixedRebalancePeriod } = _ug;
+  opts = Object.assign({ underlyingCol: sigUlCol, qGrowth, crashDropPct, crashLookbackMonths, spikeTriggerPct, rebalancePeriod, cashPct, contribDeployPct, targetFromPrevTarget, buyThrottlePct, taxRate, parkAsset, baselineRate: rate }, opts);
   const sim = simulate(initial, monthly, nineSigCashRate, entryIdx, exitIdx, annualRaise, opts);
+  const fixed = simulateFixedSplit(initial, monthly, fixedCashRate, entryIdx, exitIdx, annualRaise, {
+    underlyingCol: fixedUlCol,
+    taxRate,
+    stockPct: fixedStockPct,
+    rebalancePeriod: fixedRebalancePeriod,
+  });
+  sim.fixedPoints = fixed.fixedPoints;
+  sim.fixedLog = fixed.log;
   const smaP = _smaParamsForAnalytics();
   if (smaP) {
     const r = simulateSMA(initial, monthly, smaCashRate, entryIdx, exitIdx, annualRaise, smaP);
@@ -1414,11 +1456,13 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
   const p = cfg.params || {};
   const get = (typeof pget === 'function') ? pget : (pp, id, d) => (pp && id in pp) ? pp[id] : d;
   const ul  = (typeof ulColFromVal === 'function') ? ulColFromVal : (v) => (v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1);
+  const taxRate = _underlyingAndGrowth().taxRate;
   if (cfg.type === '9sig') {
     const cd = +get(p, 'select-9sig-crashdrop', 30), sp = +get(p, 'select-9sig-spike', 100);
     const opts = {
       qGrowth: (+get(p, 'select-9sig-growth', 9)) / 100 || 0.09,
       underlyingCol: ul(get(p, 'select-9sig-underlying', 'tqqq')),
+      taxRate,
       crashDropPct: Number.isFinite(cd) ? cd : 30,
       crashLookbackMonths: +get(p, 'select-9sig-crashwin', 24) || 24,
       spikeTriggerPct: Number.isFinite(sp) ? sp : 100,
@@ -1429,7 +1473,7 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
       buyThrottlePct: +get(p, 'select-9sig-buypower', 90) || 90,
       parkAsset: get(p, 'select-9sig-park-asset', 'cash') || 'cash',
     };
-    const cashRate = (+get(p, 'select-9sig-cashrate', 4) || 0) / 100;
+    const cashRate = (+get(p, 'select-9sig-cashrate', 3.14) || 0) / 100;
     const r = simulate(initial, monthly, cashRate, entryIdx, exitIdx, annualRaise, opts);
     return (r.log || []).map(l => ({ date: l.date, value: l.total }));
   }
@@ -1438,6 +1482,7 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
       smaAsset: get(p, 'select-sma-asset', 'qqq') || 'qqq',
       smaWindow: +get(p, 'select-sma-window', 200) || 200,
       underlyingCol: ul(get(p, 'select-sma-underlying', 'tqqq')),
+      taxRate,
       entryBufferPct: +get(p, 'select-sma-entry-buf', 0) || 0,
       exitBufferPct: +get(p, 'select-sma-exit-buf', 0) || 0,
       rsiOverheatThreshold: +get(p, 'select-sma-rsi-oh', 0) || 0,
@@ -1448,9 +1493,20 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
       bgDelevPct: +get(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +get(p, 'select-sma-bg-gtfo', 0) || 0,
     };
-    const cashRate = (+get(p, 'select-sma-cashrate', 4) || 0) / 100;
+    const cashRate = (+get(p, 'select-sma-cashrate', 3.14) || 0) / 100;
     const r = simulateSMA(initial, monthly, cashRate, entryIdx, exitIdx, annualRaise, opts);
     return (r.smaPoints || []).map(pt => ({ date: pt.date, value: pt.value }));
+  }
+  if (cfg.type === 'fixed') {
+    const opts = {
+      underlyingCol: ul(get(p, 'select-fixed-underlying', 'tqqq')),
+      taxRate,
+      stockPct: +get(p, 'select-fixed-stock', 75) || 75,
+      rebalancePeriod: get(p, 'select-fixed-period', 'quarterly') || 'quarterly',
+    };
+    const cashRate = (+get(p, 'select-fixed-cashrate', 3.14) || 0) / 100;
+    const r = simulateFixedSplit(initial, monthly, cashRate, entryIdx, exitIdx, annualRaise, opts);
+    return (r.fixedPoints || []).map(pt => ({ date: pt.date, value: pt.value }));
   }
   if (cfg.type === 'bh') {
     const r = simulate(initial, monthly, 0, entryIdx, exitIdx, annualRaise, {});
@@ -1614,7 +1670,7 @@ function getCellSim(startYear, period) {
 
   const smaP = _smaParamsForAnalytics();
   const _ug = _underlyingAndGrowth();
-  const key = JSON.stringify({ initial, monthly, rate, annualRaise, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, cw: _ug.crashLookbackMonths, sp: _ug.spikeTriggerPct, np: _ug.rebalancePeriod, ch: _ug.cashPct, dp: _ug.contribDeployPct, tc: _ug.targetFromPrevTarget, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, pa: _ug.parkAsset });
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, cw: _ug.crashLookbackMonths, sp: _ug.spikeTriggerPct, np: _ug.rebalancePeriod, ch: _ug.cashPct, dp: _ug.contribDeployPct, tc: _ug.targetFromPrevTarget, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, tax: _ug.taxRate, pa: _ug.parkAsset, ful: _ug.fixedUlCol, fcr: _ug.fixedCashRate, fsp: _ug.fixedStockPct, fp: _ug.fixedRebalancePeriod });
   if (_cellSimsKey !== key) {
     _cellSims    = new Map();
     _cellSimsKey = key;
@@ -1650,7 +1706,7 @@ function getYearStartSim(startYear) {
 
   const smaP = _smaParamsForAnalytics();
   const _ug = _underlyingAndGrowth();
-  const key = JSON.stringify({ initial, monthly, rate, annualRaise, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, cw: _ug.crashLookbackMonths, sp: _ug.spikeTriggerPct, np: _ug.rebalancePeriod, ch: _ug.cashPct, dp: _ug.contribDeployPct, tc: _ug.targetFromPrevTarget, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, pa: _ug.parkAsset });
+  const key = JSON.stringify({ initial, monthly, rate, annualRaise, sma: smaP, ul: _ug.sigUlCol, qg: _ug.qGrowth, cd: _ug.crashDropPct, cw: _ug.crashLookbackMonths, sp: _ug.spikeTriggerPct, np: _ug.rebalancePeriod, ch: _ug.cashPct, dp: _ug.contribDeployPct, tc: _ug.targetFromPrevTarget, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, tax: _ug.taxRate, pa: _ug.parkAsset, ful: _ug.fixedUlCol, fcr: _ug.fixedCashRate, fsp: _ug.fixedStockPct, fp: _ug.fixedRebalancePeriod });
   if (_perYearSimsKey !== key) {
     _perYearSims    = new Map();
     _perYearSimsKey = key;
@@ -1919,7 +1975,8 @@ function getSpiralSim(initial, monthly, rate, annualRaise, opts) {
     cw: _ug.crashLookbackMonths,
     sp: _ug.spikeTriggerPct,
     np: _ug.rebalancePeriod,
-    ch: _ug.cashPct, dp: _ug.contribDeployPct, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, pa: _ug.parkAsset,
+    ch: _ug.cashPct, dp: _ug.contribDeployPct, ncr: _ug.nineSigCashRate, scr: _ug.smaCashRate, nbp: _ug.buyThrottlePct, tax: _ug.taxRate, pa: _ug.parkAsset,
+    ful: _ug.fixedUlCol, fcr: _ug.fixedCashRate, fsp: _ug.fixedStockPct, fp: _ug.fixedRebalancePeriod,
   });
   if (_spiralSimKey === key && _spiralSim) return _spiralSim;
   _spiralSim    = _runAnalyticsSim(initial, monthly, rate, 0, quarterlyData.length - 1, annualRaise, opts);

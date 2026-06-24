@@ -1,3 +1,351 @@
+function createTaxLots(taxRate) {
+  const lots = [];
+  const rate = Math.max(0, +taxRate || 0);
+  return {
+    buy(shares, price) {
+      if (shares > 0 && price > 0) lots.push({ shares, cost: price });
+    },
+    sell(shares, price) {
+      let remaining = Math.max(0, shares || 0);
+      let realizedGain = 0;
+      while (remaining > 1e-12 && lots.length) {
+        const lot = lots[0];
+        const take = Math.min(remaining, lot.shares);
+        realizedGain += take * (price - lot.cost);
+        lot.shares -= take;
+        remaining -= take;
+        if (lot.shares <= 1e-12) lots.shift();
+      }
+      return { realizedGain, taxPaid: Math.max(0, realizedGain) * rate };
+    },
+  };
+}
+
+function accrueCashInterest(cash, monthlyRate, taxRate) {
+  if (!(cash > 0) || !monthlyRate) return { cash, taxPaid: 0 };
+  const interest = cash * monthlyRate;
+  const taxPaid = interest > 0 ? interest * Math.max(0, +taxRate || 0) : 0;
+  return { cash: cash + interest - taxPaid, taxPaid };
+}
+
+function mapQuarterlyWindowToPeriod(entryIdx, exitIdx, period, qData) {
+  if (period !== 'quarterly' && quarterlyData && qData && qData !== quarterlyData) {
+    const entryDate = quarterlyData[entryIdx] && quarterlyData[entryIdx][0];
+    const exitDate  = quarterlyData[exitIdx]  && quarterlyData[exitIdx][0];
+    if (entryDate && exitDate) {
+      let e = 0, x = qData.length - 1;
+      for (let i = 0; i < qData.length; i++) { if (qData[i][0] <= entryDate) e = i; else break; }
+      for (let i = qData.length - 1; i >= 0; i--) { if (qData[i][0] >= exitDate) x = i; else break; }
+      return { entryIdx: e, exitIdx: x };
+    }
+  }
+  return { entryIdx, exitIdx };
+}
+
+function simulateFixedSplit(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
+  opts = opts || {};
+  annualRaise = annualRaise || 0;
+  const period = opts.rebalancePeriod || 'quarterly';
+  const periodData = (typeof periodDataByName !== 'undefined' && periodDataByName && periodDataByName[period]) || null;
+  const qData = opts.qData || periodData || quarterlyData;
+  const mapped = mapQuarterlyWindowToPeriod(entryIdx, exitIdx, period, qData);
+  entryIdx = mapped.entryIdx;
+  exitIdx = mapped.exitIdx;
+
+  const qSlice = qData ? qData.slice(entryIdx, exitIdx + 1) : [];
+  if (qSlice.length < 2) return { log: [], fixedPoints: [], totalContributed: initial };
+
+  const ulCol = opts.underlyingCol != null ? +opts.underlyingCol : 1;
+  const targetPct = Math.max(0, Math.min(1, (opts.stockPct != null ? +opts.stockPct : 75) / 100));
+  const monthlyRate = (+annualRate || 0) / 12;
+  const taxLots = createTaxLots(opts.taxRate);
+
+  const p0 = qSlice[0][ulCol] || 0;
+  let cash = initial * (1 - targetPct);
+  let shares = p0 > 0 ? (initial * targetPct) / p0 : 0;
+  taxLots.buy(shares, p0);
+  let totalInvested = initial;
+  let currentMonthly = monthly;
+  const startYear = parseInt(qSlice[0][0].substring(0, 4));
+  let prevDate = qSlice[0][0];
+  const log = [];
+
+  function row(date, price, action, taxInfo) {
+    const stockVal = shares * (price || 0);
+    return {
+      date,
+      price: price || 0,
+      shares,
+      stockVal,
+      cash,
+      total: stockVal + cash,
+      invested: totalInvested,
+      stockPct: targetPct * 100,
+      cashPct: (1 - targetPct) * 100,
+      action,
+      realizedGain: (taxInfo && taxInfo.realizedGain) || 0,
+      taxPaid: (taxInfo && taxInfo.taxPaid) || 0,
+    };
+  }
+
+  log.push(row(qSlice[0][0], p0, 'START', null));
+
+  for (let qi = 1; qi < qSlice.length; qi++) {
+    const qDate = qSlice[qi][0];
+    const qPrice = qSlice[qi][ulCol] || 0;
+    const currentYear = parseInt(qDate.substring(0, 4));
+    currentMonthly = monthly * Math.pow(1 + annualRaise, currentYear - startYear);
+    let taxInfo = { realizedGain: 0, taxPaid: 0 };
+
+    for (const m of monthlyData || []) {
+      if (m[0] <= prevDate || m[0] > qDate) continue;
+      const mPrice = m[ulCol] || 0;
+      const toStock = currentMonthly * targetPct;
+      if (toStock > 0 && mPrice > 0) {
+        const bought = toStock / mPrice;
+        shares += bought;
+        taxLots.buy(bought, mPrice);
+      } else {
+        cash += toStock;
+      }
+      cash += currentMonthly * (1 - targetPct);
+      totalInvested += currentMonthly;
+      const accrual = accrueCashInterest(cash, monthlyRate, opts.taxRate);
+      cash = accrual.cash;
+      taxInfo.taxPaid += accrual.taxPaid;
+    }
+
+    let action = 'HOLD';
+    if (qPrice > 0) {
+      let total = shares * qPrice + cash;
+      let targetStockVal = total * targetPct;
+      let delta = targetStockVal - shares * qPrice;
+      if (delta > 1e-9) {
+        const buyAmt = Math.min(delta, cash);
+        if (buyAmt > 1e-9) {
+          const bought = buyAmt / qPrice;
+          shares += bought;
+          taxLots.buy(bought, qPrice);
+          cash -= buyAmt;
+          action = 'BUY ' + fmt(buyAmt);
+        }
+      } else if (delta < -1e-9) {
+        let sellAmt = 0;
+        for (let k = 0; k < 20; k++) {
+          total = shares * qPrice + cash;
+          targetStockVal = total * targetPct;
+          const excess = shares * qPrice - targetStockVal;
+          if (excess <= 1e-7) break;
+          const chunk = Math.min(excess, shares * qPrice);
+          const sold = chunk / qPrice;
+          const thisTax = taxLots.sell(sold, qPrice);
+          shares -= sold;
+          cash += chunk - thisTax.taxPaid;
+          sellAmt += chunk;
+          taxInfo.realizedGain += thisTax.realizedGain;
+          taxInfo.taxPaid += thisTax.taxPaid;
+        }
+        if (sellAmt > 1e-9) action = 'SELL ' + fmt(sellAmt);
+      }
+    }
+
+    log.push(row(qDate, qPrice, action, taxInfo));
+    prevDate = qDate;
+  }
+
+  return {
+    log,
+    fixedPoints: log.map(l => ({ date: l.date, value: l.total, state: 'in' })),
+    totalContributed: totalInvested,
+  };
+}
+
+// ETF/JEPQ paired strategy.
+//
+// Starts with the portfolio split between a growth ETF (col opts.underlyingCol,
+// default TQQQ col 1) and JEPQ (col 8) at opts.ulPct / (1-opts.ulPct) ratio
+// (default 50/50).  Each month:
+//   1. JEPQ distributes per-share income (from jepqDistributionMap). The net
+//      after tax is reinvested into whichever asset currently has the lower value.
+//   2. Monthly contribution (if any) is invested into the lesser-valued asset.
+//   3. If either leg's actual fraction >= rebalanceThreshold × its desired fraction,
+//      sell the excess of the larger position back to the configured ulPct target.
+//      Tax on realized gains is paid from the sale proceeds (FIFO).
+//   4. Rebalancing is skipped when fewer than rebalanceCooldownMonths have elapsed
+//      since the last rebalance (prevents whipsawing in volatile periods).
+//
+// All sells go through createTaxLots() at opts.taxRate (default 0).
+// opts.rebalanceThreshold      — overweight multiplier that triggers rebalancing (default 1.5).
+// opts.rebalanceCooldownMonths — minimum months between rebalances (default 0 = no cooldown).
+// opts.underlyingCol           — column index for the growth ETF (default 1 = TQQQ).
+// opts.ulPct                   — fraction of portfolio in growth ETF (default 0.5).
+// opts.jepqDistMap             — Map<YYYY-MM-DD, amountPerShare> (uses global
+//                                jepqDistributionMap if not provided).
+function simulateTQQQJEPQ(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
+  opts = opts || {};
+  annualRaise = annualRaise || 0;
+  const rebalThreshold    = opts.rebalanceThreshold != null ? +opts.rebalanceThreshold : 1.5;
+  const cooldownMonths    = opts.rebalanceCooldownMonths != null ? +opts.rebalanceCooldownMonths : 0;
+  const taxRate        = opts.taxRate != null ? +opts.taxRate : 0;
+  const ulPct          = opts.ulPct != null ? Math.max(0.01, Math.min(0.99, +opts.ulPct)) : 0.5;
+  const distMap        = opts.jepqDistMap ||
+    (typeof jepqDistributionMap !== 'undefined' ? jepqDistributionMap : new Map());
+  const monthlyRate    = (+annualRate || 0) / 12;
+
+  const UL_COL = opts.underlyingCol != null ? +opts.underlyingCol : 1;
+  const JEPQ_COL = 8;
+
+  // Map quarterly entry/exit to monthly indices
+  const mSlice = monthlyData ? monthlyData.slice() : [];
+  if (mSlice.length < 2) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  // Find monthly start/end dates from quarterly entry/exit
+  const entryDate = quarterlyData && quarterlyData[entryIdx] ? quarterlyData[entryIdx][0] : mSlice[0][0];
+  const exitDate  = quarterlyData && quarterlyData[exitIdx]  ? quarterlyData[exitIdx][0]  : mSlice[mSlice.length - 1][0];
+  const mStart = mSlice.findIndex(m => m[0] >= entryDate);
+  let   mEnd   = mSlice.length - 1;
+  for (let i = mSlice.length - 1; i >= 0; i--) { if (mSlice[i][0] <= exitDate) { mEnd = i; break; } }
+  if (mStart < 0 || mEnd <= mStart) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  const slice = mSlice.slice(mStart, mEnd + 1);
+
+  const p0u = slice[0][UL_COL] || 0;
+  const p0j = slice[0][JEPQ_COL] || 0;
+  if (!p0u || !p0j) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  const ulLots   = createTaxLots(taxRate);
+  const jepqLots = createTaxLots(taxRate);
+
+  let ulShares   = (initial * ulPct) / p0u;
+  let jepqShares = (initial * (1 - ulPct)) / p0j;
+  ulLots.buy(ulShares, p0u);
+  jepqLots.buy(jepqShares, p0j);
+
+  let totalInvested = initial;
+  let currentMonthly = monthly;
+  let lastRebalMonth = -9999;
+  const startYear = parseInt(slice[0][0].substring(0, 4));
+  const log = [];
+
+  function snapshot(date, pu, pj, action, taxInfo) {
+    const uv = ulShares * pu, jv = jepqShares * pj;
+    return {
+      date, ulPrice: pu, jepqPrice: pj,
+      ulShares, jepqShares,
+      ulVal: uv, jepqVal: jv,
+      total: uv + jv,
+      invested: totalInvested,
+      action,
+      realizedGain: (taxInfo && taxInfo.realizedGain) || 0,
+      taxPaid:      (taxInfo && taxInfo.taxPaid) || 0,
+    };
+  }
+
+  log.push(snapshot(slice[0][0], p0u, p0j, 'START', null));
+
+  for (let mi = 1; mi < slice.length; mi++) {
+    const m = slice[mi];
+    const date = m[0];
+    const pu = m[UL_COL] || 0;
+    const pj = m[JEPQ_COL] || 0;
+    if (!pu || !pj) continue;
+
+    const currentYear = parseInt(date.substring(0, 4));
+    currentMonthly = monthly * Math.pow(1 + annualRaise, currentYear - startYear);
+
+    const taxInfo = { realizedGain: 0, taxPaid: 0 };
+
+    // 1. JEPQ distribution — tax immediately, reinvest net into lesser asset
+    const distPerShare = distMap.get(date) || 0;
+    if (distPerShare > 0) {
+      const gross = jepqShares * distPerShare;
+      const tax   = gross * taxRate;
+      const net   = gross - tax;
+      taxInfo.taxPaid += tax;
+      if (net > 1e-9) {
+        const uv = ulShares * pu, jv = jepqShares * pj;
+        if (uv <= jv && pu > 0) {
+          const bought = net / pu;
+          ulShares += bought;
+          ulLots.buy(bought, pu);
+        } else if (pj > 0) {
+          const bought = net / pj;
+          jepqShares += bought;
+          jepqLots.buy(bought, pj);
+        }
+      }
+    }
+
+    // 2. Monthly contribution → lesser asset
+    if (currentMonthly > 0) {
+      const uv = ulShares * pu, jv = jepqShares * pj;
+      if (uv <= jv && pu > 0) {
+        const bought = currentMonthly / pu;
+        ulShares += bought;
+        ulLots.buy(bought, pu);
+      } else if (pj > 0) {
+        const bought = currentMonthly / pj;
+        jepqShares += bought;
+        jepqLots.buy(bought, pj);
+      }
+      totalInvested += currentMonthly;
+    }
+
+    // 3. Threshold-based rebalancing
+    let action = 'HOLD';
+    const uv = ulShares * pu, jv = jepqShares * pj;
+    const total_val = uv + jv;
+    const overweightTrigger = total_val > 1e-9 &&
+      Math.max(uv / (total_val * ulPct), jv / (total_val * (1 - ulPct))) >= rebalThreshold;
+    if (overweightTrigger && mi - lastRebalMonth >= Math.max(1, cooldownMonths)) {
+      // Iterative sell (same approach as simulateFixedSplit) to account for
+      // the fact that tax reduces proceeds, so the first sell slightly misses.
+      if (uv > jv) {
+        let sellAmt = 0;
+        for (let k = 0; k < 20; k++) {
+          const excess = ulShares * pu - (ulShares * pu + jepqShares * pj) * ulPct;
+          if (excess <= 1e-7) break;
+          const sold = Math.min(excess, ulShares * pu) / pu;
+          const t    = ulLots.sell(sold, pu);
+          ulShares -= sold;
+          const net = sold * pu - t.taxPaid;
+          const bought = net / pj;
+          jepqShares += bought;
+          jepqLots.buy(bought, pj);
+          sellAmt += sold * pu;
+          taxInfo.realizedGain += t.realizedGain;
+          taxInfo.taxPaid      += t.taxPaid;
+        }
+        if (sellAmt > 1e-9) { action = 'REBAL UL→JEPQ'; lastRebalMonth = mi; }
+      } else {
+        let sellAmt = 0;
+        for (let k = 0; k < 20; k++) {
+          const excess = jepqShares * pj - (ulShares * pu + jepqShares * pj) * (1 - ulPct);
+          if (excess <= 1e-7) break;
+          const sold = Math.min(excess, jepqShares * pj) / pj;
+          const t    = jepqLots.sell(sold, pj);
+          jepqShares -= sold;
+          const net = sold * pj - t.taxPaid;
+          const bought = net / pu;
+          ulShares += bought;
+          ulLots.buy(bought, pu);
+          sellAmt += sold * pj;
+          taxInfo.realizedGain += t.realizedGain;
+          taxInfo.taxPaid      += t.taxPaid;
+        }
+        if (sellAmt > 1e-9) { action = 'REBAL JEPQ→UL'; lastRebalMonth = mi; }
+      }
+    }
+
+    log.push(snapshot(date, pu, pj, action, taxInfo));
+  }
+
+  return {
+    log,
+    tqqjPoints: log.map(l => ({ date: l.date, value: l.total })),
+    totalContributed: totalInvested,
+  };
+}
 
 // SMA timing strategy: hold TQQQ while the signal asset (QQQ or SPY) closes
 // above its N-day simple moving average; flip to cash (earning the user's
@@ -25,6 +373,8 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   const smaAsset  = (opts.smaAsset || 'qqq').toLowerCase();
   const smaWindow = +opts.smaWindow || 200;
   const ulCol     = opts.underlyingCol != null ? +opts.underlyingCol : 1;
+  const taxLotsByAsset = {};
+  const taxLotsFor = (asset) => taxLotsByAsset[asset] || (taxLotsByAsset[asset] = createTaxLots(opts.taxRate));
   // Hysteresis buffers (% of SMA). Enter only when signal asset closes
   // (1 + entryBuf)% above SMA; exit only when (1 - exitBuf)% below. Default
   // 0/0 = current binary-cross behavior. Set both > 0 to mimic the
@@ -157,7 +507,11 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   let target = computeTarget(state, bgState);
   if (target !== 'cash') {
     const p0 = priceOf(sm0, target);
-    if (p0 > 0) { shares[target] = cash / p0; cash = 0; }
+    if (p0 > 0) {
+      shares[target] = cash / p0;
+      taxLotsFor(target).buy(shares[target], p0);
+      cash = 0;
+    }
   }
   let dcaRemaining = 0; // 0 = no active DCA (target already reached or all-cash)
 
@@ -178,6 +532,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     price: ul0, shares: shares.tqqq + shares.qld + shares.qqq5 + shares.sso + shares.spxl,  // leveraged-side share count
     stockVal: totalAt(sm0) - cash, cash, total: totalAt(sm0),
     invested: initial,
+    realizedGain: 0, taxPaid: 0,
   }];
   const qEnds = new Set();
   for (let qi = entryIdx; qi <= exitIdx; qi++) qEnds.add(quarterlyData[qi][0]);
@@ -210,8 +565,11 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
       lastYear = yr;
     }
 
+    let lastTaxInfo = { realizedGain: 0, taxPaid: 0 };
     // Accrue cash interest on whatever cash sits idle for the month.
-    if (cash > 0) cash *= (1 + monthlyRate);
+    const accrual = accrueCashInterest(cash, monthlyRate, opts.taxRate);
+    cash = accrual.cash;
+    lastTaxInfo.taxPaid += accrual.taxPaid;
     // Contributions always land in cash; the rebalance below redeploys.
     totalInvested += currentMonthly;
     cash += currentMonthly;
@@ -233,7 +591,13 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
       for (const a of Object.keys(shares)) {
         if (a !== target && shares[a] > 0) {
           const p = priceOf(row, a);
-          if (p > 0) { cash += shares[a] * p; shares[a] = 0; }
+          if (p > 0) {
+            const sell = taxLotsFor(a).sell(shares[a], p);
+            cash += shares[a] * p - sell.taxPaid;
+            lastTaxInfo.realizedGain += sell.realizedGain;
+            lastTaxInfo.taxPaid += sell.taxPaid;
+            shares[a] = 0;
+          }
         }
       }
       // Bodyguard transitions are always instant; otherwise the ladder
@@ -251,7 +615,9 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
       if (p > 0) {
         const fraction = dcaRemaining > 1 ? 1 / dcaRemaining : 1;
         const buy = cash * fraction;
-        shares[target] += buy / p;
+        const bought = buy / p;
+        shares[target] += bought;
+        taxLotsFor(target).buy(bought, p);
         cash -= buy;
         if (dcaRemaining > 0) dcaRemaining--;
       }
@@ -265,6 +631,8 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
         stockVal: totalAt(row) - cash,
         cash, total: totalAt(row),
         invested: totalInvested,
+        realizedGain: lastTaxInfo.realizedGain,
+        taxPaid: lastTaxInfo.taxPaid,
       });
     }
 
@@ -323,6 +691,8 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   // Which quarterlyData column holds the price of the leveraged ETF this run
   // trades. Default is column 1 (TQQQ) for backward compat. Column 5 is QQQ5.
   const ulCol         = opts.underlyingCol != null ? opts.underlyingCol : 1;
+  const taxLots       = createTaxLots(opts.taxRate);
+  const parkTaxLots   = createTaxLots(opts.taxRate);
   // Initial cash fraction (rest goes to the underlying). Default 0.40 matches
   // canonical 9Sig 60/40. Spike-reset target tracks (1 - cashPct) so the
   // reset rebalances back to the same stock weight the user started with.
@@ -451,8 +821,10 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   if (!isCashPark) {
     const p0 = parkPriceAt(qSlice[0]);
     parkShares = p0 > 0 ? cash / p0 : 0;
+    parkTaxLots.buy(parkShares, p0);
   }
   let tqqqShares = (initial * stockPct) / qSlice[0][ulCol];
+  taxLots.buy(tqqqShares, qSlice[0][ulCol]);
   let signalLine = initial * stockPct; // target value starts at initial stock allocation
   // Each new target grows from the PREVIOUS REBALANCE's post-rebalance holding
   // (not from the prior target). If the strategy underperforms — a throttled
@@ -481,6 +853,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   for (let qi = 0; qi < qSlice.length; qi++) {
     const qDate  = qSlice[qi][0];
     const qPrice = qSlice[qi][ulCol];
+    let taxInfo = { realizedGain: 0, taxPaid: 0 };
 
     if (qi > 0) {
       // Annual raise: increase monthly contribution at each new year
@@ -508,26 +881,26 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         const toStock = currentMonthly * contribDeployPct;
         const toPark  = currentMonthly - toStock;
         if (toStock > 0 && mPrice > 0) {
-          tqqqShares += toStock / mPrice;
-        } else if (toStock > 0) {
-          // No underlying price (data gap) — the would-be stock half waits as
-          // park instead. (For cash park that's `cash`; for asset park that's
-          // shares of the asset bought at this month's price, if available.)
+          const bought = toStock / mPrice;
+          tqqqShares += bought;
+          taxLots.buy(bought, mPrice);
         }
-        // Park-side flow:
-        //  - cash mode: dollar bucket grows by `toPark`, then earns interest.
-        //  - asset mode: buy shares at the month's park price; cash is just a
-        //    stale dollar mirror (re-priced after the loop). No interest.
+        const parkContribution = (toStock > 0 && mPrice > 0) ? toPark : currentMonthly;
         if (isCashPark) {
-          // Always include the no-price fallback's full amount + the explicit
-          // toPark when a stock-half ran.
-          const addCash = (toStock > 0 && mPrice > 0) ? toPark : currentMonthly;
+          const addCash = parkContribution;
           cash += addCash;
-          cash *= (1 + monthlyRate);
-        } else if (toPark > 0) {
+          const accrual = accrueCashInterest(cash, monthlyRate, opts.taxRate);
+          cash = accrual.cash;
+          taxInfo.taxPaid += accrual.taxPaid;
+        } else if (parkContribution > 0) {
           const parkMP = monthlyRow ? (monthlyRow[parkCol] || 0) : 0;
-          if (parkMP > 0) parkShares += toPark / parkMP;
-          else            cash += toPark; // missing park price → stash as cash; reconciled at next rebalance
+          if (parkMP > 0) {
+            const bought = parkContribution / parkMP;
+            parkShares += bought;
+            parkTaxLots.buy(bought, parkMP);
+          } else {
+            cash += parkContribution; // missing park price -> stash as cash; reconciled at next rebalance
+          }
         }
         totalInvested += currentMonthly;
         newCashThisQ += currentMonthly;
@@ -607,18 +980,37 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         const parkPriceNow = parkPriceAt(qSlice[qi]);
         const moveIntoPark = (dollars) => {
           cash += dollars;
-          if (!isCashPark && parkPriceNow > 0) parkShares += dollars / parkPriceNow;
+          if (!isCashPark && parkPriceNow > 0) {
+            const bought = dollars / parkPriceNow;
+            parkShares += bought;
+            parkTaxLots.buy(bought, parkPriceNow);
+          }
         };
         const moveOutOfPark = (dollars) => {
+          if (isCashPark) {
+            cash -= dollars;
+            return { net: dollars, realizedGain: 0, taxPaid: 0 };
+          }
+          if (!(parkPriceNow > 0)) return { net: 0, realizedGain: 0, taxPaid: 0 };
+          const sharesToSell = dollars / parkPriceNow;
+          const sellTaxInfo = parkTaxLots.sell(sharesToSell, parkPriceNow);
           cash -= dollars;
-          if (!isCashPark && parkPriceNow > 0) parkShares -= dollars / parkPriceNow;
+          parkShares -= sharesToSell;
+          return {
+            net: dollars - sellTaxInfo.taxPaid,
+            realizedGain: sellTaxInfo.realizedGain,
+            taxPaid: sellTaxInfo.taxPaid,
+          };
         };
 
         if (diff > 0 && !inCrashZone) {
           // SELL: TQQQ above signal, sell excess to cash (or park asset)
           const sharesToSell = diff / qPrice;
+          const sellTaxInfo = taxLots.sell(sharesToSell, qPrice);
           tqqqShares -= sharesToSell;
-          moveIntoPark(diff);
+          moveIntoPark(diff - sellTaxInfo.taxPaid);
+          taxInfo.realizedGain += sellTaxInfo.realizedGain;
+          taxInfo.taxPaid += sellTaxInfo.taxPaid;
           action = 'SELL ' + fmt(diff);
           crashNoSellCount = 0;
         } else if (diff > 0 && inCrashZone && crashNoSellCount < 2) {
@@ -628,8 +1020,11 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         } else if (diff > 0 && inCrashZone && crashNoSellCount >= 2) {
           // Crash zone but already skipped 2 consecutive quarters — sell anyway
           const sharesToSell = diff / qPrice;
+          const sellTaxInfo = taxLots.sell(sharesToSell, qPrice);
           tqqqShares -= sharesToSell;
-          moveIntoPark(diff);
+          moveIntoPark(diff - sellTaxInfo.taxPaid);
+          taxInfo.realizedGain += sellTaxInfo.realizedGain;
+          taxInfo.taxPaid += sellTaxInfo.taxPaid;
           action = 'SELL ' + fmt(diff) + ' (30d expired)';
           crashNoSellCount = 0;
         } else if (diff < 0 && cash > 0) {
@@ -638,9 +1033,12 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
           const available = cash * buyThrottle;
           const needed = Math.min(-diff, available);
           if (needed > 0) {
-            const sharesToBuy = needed / qPrice;
+            const parkSale = moveOutOfPark(needed);
+            const sharesToBuy = parkSale.net / qPrice;
             tqqqShares += sharesToBuy;
-            moveOutOfPark(needed);
+            taxLots.buy(sharesToBuy, qPrice);
+            taxInfo.realizedGain += parkSale.realizedGain;
+            taxInfo.taxPaid += parkSale.taxPaid;
             action = needed < -diff ? 'BUY ' + fmt(needed) + ' (part)' : 'BUY ' + fmt(needed);
           } else {
             action = 'HOLD';
@@ -663,9 +1061,11 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
         if (quarterlyTqqqGain >= spikeTrigger && postAlloc >= stockPct && postAlloc <= 1.0 && !inCrashZone) {
           const targetTqqqVal = postTotal * stockPct;
           const reduceBy = postTqqqVal - targetTqqqVal;
+          const sellTaxInfo = taxLots.sell(reduceBy / qPrice, qPrice);
           tqqqShares = targetTqqqVal / qPrice;
-          cash       = postTotal - targetTqqqVal;
-          if (!isCashPark && parkPriceNow > 0) parkShares = cash / parkPriceNow;
+          moveIntoPark(reduceBy - sellTaxInfo.taxPaid);
+          taxInfo.realizedGain += sellTaxInfo.realizedGain;
+          taxInfo.taxPaid += sellTaxInfo.taxPaid;
           signalLine = targetTqqqVal;
           action = 'RESET ' + fmt(reduceBy) + ' (spike)';
         }
@@ -674,15 +1074,15 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
       }
 
       const tqqqVal = tqqqShares * qPrice;
-      log.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, action, invested: totalInvested, investedCompounded, target: signalLine });
+      log.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, action, invested: totalInvested, investedCompounded, target: signalLine, realizedGain: taxInfo.realizedGain, taxPaid: taxInfo.taxPaid });
       // Period-end snapshot (post-rebalance) — keeps the quarter series continuous.
-      if (sampleQuarterly) samplePoints.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded });
+      if (sampleQuarterly) samplePoints.push({ date: qDate, price: qPrice, tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded, realizedGain: taxInfo.realizedGain, taxPaid: taxInfo.taxPaid });
       prevHolding = tqqqVal; // next period's target grows from THIS period's holding
     } else {
       // First quarter — just record starting state
       const tqqqVal = tqqqShares * qSlice[0][ulCol];
-      log.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, action: 'START', invested: totalInvested, investedCompounded, target: signalLine });
-      if (sampleQuarterly) samplePoints.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded });
+      log.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, action: 'START', invested: totalInvested, investedCompounded, target: signalLine, realizedGain: 0, taxPaid: 0 });
+      if (sampleQuarterly) samplePoints.push({ date: qDate, price: qSlice[0][ulCol], tqqqVal, cash, total: tqqqVal + cash, target: signalLine, invested: totalInvested, investedCompounded, realizedGain: 0, taxPaid: 0 });
       prevHolding = tqqqVal;
     }
     prevQDate = qDate;
@@ -744,4 +1144,3 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     totalContributed: totalInvested,
   };
 }
-

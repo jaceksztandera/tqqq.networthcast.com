@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Fetches daily closing prices for QQQ, QLD, TQQQ, SPY, SSO, SPXL, and QQQ5
-(the Leverage Shares 5× Long Nasdaq 100 ETP on LSE, yfinance ticker `QQQ5.L`)
+Fetches daily closing prices for QQQ, QLD, TQQQ, SPY, SSO, SPXL, QQQ5, and JEPQ
+(the Leverage Shares 5× Long Nasdaq 100 ETP on LSE, yfinance ticker `QQQ5.L`;
+and JPMorgan Nasdaq Equity Premium Income ETF, ticker `JEPQ`, IPO 2022-05-03)
 from Yahoo Finance and short-term interest rates from FRED, then writes them
 as TSV files consumed by index.html.
 
@@ -43,9 +44,17 @@ Synthesis formulas:
   SPXL 1988 → 2008    ← ^SP500TR                     (3× − 2×rate − SPXL exp)
   QQQ5 pre-1999       ← extended ^NDX                (5× − 4×rate − QQQ5 exp)
   QQQ5 1999 → 2021    ← derived NDX-TR               (5× − 4×rate − QQQ5 exp)
+  JEPQ pre-1999       ← extended ^NDX                (1× − CC_drag − JEPQ exp)
+  JEPQ 1999 → 2022    ← derived NDX-TR               (1× − CC_drag − JEPQ exp)
 
 QQQ and SPY have leverage 1, so (L-1) × rate = 0 — no financing-cost term.
 QLD, TQQQ, SSO, SPXL, and QQQ5 get the rate correction.
+JEPQ is a covered-call ETF (leverage 1); instead of a financing cost it has a
+covered-call drag equal to the annual distribution yield it pays out. The drag
+is calibrated from real JEPQ vs NDX-TR price-return data at rebuild time and
+stored as the JEPQ_CC_DRAG_DAILY constant. Matching monthly per-share
+distributions are written to jepq-distributions.tsv (synthetic pre-2022,
+real from yfinance post-2022).
 
 The local ^ndx_d.csv extends pre-1985 history. The actual NASDAQ-100 index
 didn't exist before 1985-01-31, so values before that are a back-reconstruction
@@ -132,6 +141,27 @@ QQQ5_SWAP_SPREAD   = 0.025           # 2.5%/yr swap-counterparty spread over the
                                      # implied 0.65%/yr because 5× single-index
                                      # swaps are exotic — smaller liquidity pool,
                                      # higher counterparty risk premium.
+# === JEPQ (JPMorgan Nasdaq Equity Premium Income ETF, covered-call) =========
+# JEPQ holds Nasdaq-100 stocks and writes monthly near-the-money call options.
+# The call premium collected is paid out as distributions; the price return
+# therefore lags NDX-TR by roughly the distribution yield each year.
+#
+# Two constants are AUTO-CALIBRATED in rebuild mode from real yfinance data
+# and then used for the pre-IPO backward synthesis:
+#
+#   JEPQ_EXPENSE_DAILY  — fixed at 0.35%/yr (published TER, does not change)
+#   JEPQ_CC_DRAG_DAILY  — computed as (NDX-TR annual return − JEPQ price annual
+#                          return − 0.35%/yr) / 252, then stored as a module
+#                          global so the synthesis formulas can read it.
+#                          Typical value ≈ 8–10%/yr depending on market regime.
+#   JEPQ_DIST_YIELD     — computed as (total real dividends / avg NAV) / n_years.
+#                          Used for the synthetic pre-IPO distribution entries.
+#
+# In incremental mode these constants are NOT recalibrated; the synthesis
+# prefix is treated as permanent (same as all other synthesized ETFs).
+JEPQ_EXPENSE_DAILY = 0.0035 / 252   # 0.35%/yr TER (published, fixed)
+JEPQ_CC_DRAG_DAILY = 0.09   / 252   # fallback ~9%/yr; overwritten at rebuild
+JEPQ_DIST_YIELD    = 0.09           # fallback ~9%/yr; overwritten at rebuild
 
 # === Financing-cost model =================================================
 # A leveraged ETF holding $1 of investor NAV achieves $L of index exposure by
@@ -156,6 +186,7 @@ tickers = [
     ('SSO',    'synthetic-sso.tsv'),
     ('SPXL',   'synthetic-spxl.tsv'),
     ('QQQ5.L', 'synthetic-qqq5.tsv'),
+    ('JEPQ',   'synthetic-jepq.tsv'),
 ]
 
 
@@ -461,6 +492,100 @@ def write_price_tsv(path, prefix_pairs, real_df):
             f.write(f'{date_str}\t{fmt_close(cell(row["Close"]))}\n')
 
 
+def build_jepq_distribution_prefix(prefix_pairs, dist_yield):
+    """Synthetic per-share monthly distributions for pre-IPO JEPQ dates.
+
+    For each calendar month represented in prefix_pairs, takes the last price
+    in that month and estimates the distribution as price × dist_yield / 12.
+    Real JEPQ distributions vary with the actual option premiums collected;
+    this constant-yield approximation is appropriate for the synthetic history.
+
+    Returns [(date_str_for_tsv, amount)] sorted chronologically.
+    """
+    month_ends = {}
+    for d, price in prefix_pairs:
+        key = (d.year, d.month)
+        if key not in month_ends or d > month_ends[key][0]:
+            month_ends[key] = (d, price)
+    rows = []
+    for (year, month) in sorted(month_ends.keys()):
+        d, price = month_ends[(year, month)]
+        amount = price * dist_yield / 12
+        rows.append((f'{d.month}/{d.day}/{d.year} 16:00:00', amount))
+    return rows
+
+
+def fetch_jepq_real_dividends():
+    """Fetch JEPQ real dividends from yfinance.
+
+    Returns dict { tz-naive Timestamp → amount_per_share }.
+    Empty dict on failure (leaves synthetic-only file untouched for incremental).
+    """
+    try:
+        divs = yf.Ticker('JEPQ').dividends
+        if divs is None or len(divs) == 0:
+            return {}
+        out = {}
+        for date, amount in divs.items():
+            d = normalize_ts(date)
+            out[d] = float(amount)
+        return out
+    except Exception as e:
+        print(f"  JEPQ dividends fetch failed: {e}")
+        return {}
+
+
+def write_jepq_distributions_tsv(path, prefix_rows, real_div_map):
+    """Write jepq-distributions.tsv: synthetic prefix then real distributions."""
+    with open(path, 'w') as f:
+        f.write('Date\tAmount\n')
+        for date_str, amount in prefix_rows:
+            f.write(f'{date_str}\t{amount:.6f}\n')
+        for d in sorted(real_div_map.keys()):
+            f.write(f'{d.month}/{d.day}/{d.year} 16:00:00\t{real_div_map[d]:.6f}\n')
+
+
+def incremental_refresh_jepq_distributions(path):
+    """Refresh the real-data tail of jepq-distributions.tsv.
+
+    Preserves existing rows whose dates precede JEPQ's IPO (synthetic prefix);
+    replaces the real-data portion with a fresh yfinance dividend pull.
+    """
+    import pandas as pd
+    jepq_ipo = pd.Timestamp(2022, 5, 3)
+
+    # Read existing synthetic prefix rows
+    synth_rows = []
+    if os.path.exists(path):
+        with open(path) as f:
+            next(f, None)
+            for line in f:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 2:
+                    continue
+                try:
+                    date_str = parts[0].split(' ')[0]
+                    m, dy, y = date_str.split('/')
+                    ts = pd.Timestamp(int(y), int(m), int(dy))
+                    if ts < jepq_ipo:
+                        synth_rows.append((ts, float(parts[1])))
+                except (ValueError, TypeError):
+                    continue
+    else:
+        print(f"  jepq-distributions.tsv: missing — run --rebuild to bootstrap")
+        return
+
+    real_div_map = fetch_jepq_real_dividends()
+    if not real_div_map:
+        print(f"  jepq-distributions.tsv: no live dividend data; leaving untouched")
+        return
+
+    prefix_rows = [(f'{d.month}/{d.day}/{d.year} 16:00:00', a) for d, a in sorted(synth_rows)]
+    write_jepq_distributions_tsv(path, prefix_rows, real_div_map)
+    last = max(real_div_map.keys()).strftime('%Y-%m-%d')
+    print(f"  jepq-distributions.tsv: {len(synth_rows)} synthetic + {len(real_div_map)} real, through {last}")
+
+
 def incremental_refresh():
     """Default daily-cron path. The synthesized pre-IPO prefix of each TSV
     is permanent and lives in the committed file; we only need to refresh
@@ -485,6 +610,11 @@ def incremental_refresh():
         write_price_tsv(path, prefix_pairs, real_df)
         last = real_df.index[-1].strftime('%Y-%m-%d')
         print(f"  {filename}: {len(prefix_pairs)} preserved + {len(real_df)} real, through {last}")
+
+    # Also refresh JEPQ distributions (separate from price TSV)
+    incremental_refresh_jepq_distributions(
+        os.path.join(data_dir, 'jepq-distributions.tsv')
+    )
 
 
 # === CLI =================================================================
@@ -525,6 +655,7 @@ spy_df          = fetch('SPY')
 sso_df          = fetch('SSO')                              # ProShares 2× S&P500, 2006-06-21+
 spxl_df         = fetch('SPXL')                             # Direxion 3× S&P500, 2008-11-05+
 qqq5_df         = fetch('QQQ5.L')                           # Leverage Shares 5× QQQ ETP (LSE), 2021-12-10+
+jepq_df         = fetch('JEPQ')                             # JPMorgan NASDAQ EPI ETF, 2022-05-03+
 ndx_df          = fetch('^NDX')
 gspc_df         = fetch('^GSPC')
 sp500tr_df      = fetch('^SP500TR')
@@ -725,13 +856,77 @@ else:
     spxl_prefix_rows = spxl_phase1_rows
 
 
+# ---- JEPQ: covered-call ETF on NDX, IPO 2022-05-03 ----------------------
+# Auto-calibrate JEPQ_CC_DRAG_DAILY and JEPQ_DIST_YIELD from real data
+# before running the backward synthesis. The drag (= NDX-TR annual − JEPQ
+# price annual − expense) tells us how much of the index return is converted
+# to distributions each year; the distribution yield tells us the synthetic
+# monthly payout amount to write for pre-IPO dates.
+if not jepq_df.empty:
+    import math as _math
+    _jepq_n_days = len(jepq_df)
+    _jepq_n_years = _jepq_n_days / 252
+    _jepq_p0 = cell(jepq_df['Close'].iloc[0])
+    _jepq_p1 = cell(jepq_df['Close'].iloc[-1])
+    _jepq_price_annual = (_jepq_p1 / _jepq_p0) ** (1.0 / _jepq_n_years) - 1
+
+    # Find NDX-TR return over the same window as the real JEPQ data
+    _jepq_ipo = normalize_ts(jepq_df.index[0])
+    _jepq_end = normalize_ts(jepq_df.index[-1])
+    _ndx_tr_map = dict(ndx_tr_pairs)
+    _ndx_tr_s = next((c for d, c in ndx_tr_pairs if d >= _jepq_ipo), None)
+    _ndx_tr_e = next((c for d, c in reversed(ndx_tr_pairs) if d <= _jepq_end), None)
+    if _ndx_tr_s and _ndx_tr_e and _jepq_n_years > 0.5:
+        _ndx_tr_annual = (_ndx_tr_e / _ndx_tr_s) ** (1.0 / _jepq_n_years) - 1
+        _drag = max(0.0, _ndx_tr_annual - _jepq_price_annual - JEPQ_EXPENSE_DAILY * 252)
+        JEPQ_CC_DRAG_DAILY = _drag / 252
+        print(f"  JEPQ calibration: NDX-TR {_ndx_tr_annual*100:.2f}%/yr, "
+              f"JEPQ price {_jepq_price_annual*100:.2f}%/yr → "
+              f"CC drag {_drag*100:.2f}%/yr")
+    else:
+        print(f"  JEPQ calibration: insufficient NDX-TR overlap; using fallback {JEPQ_CC_DRAG_DAILY*252*100:.1f}%/yr")
+
+    # Calibrate distribution yield from real dividends
+    _real_divs = fetch_jepq_real_dividends()
+    if _real_divs and _jepq_n_years > 0.5:
+        _total_divs = sum(_real_divs.values())
+        _avg_price  = (_jepq_p0 + _jepq_p1) / 2
+        JEPQ_DIST_YIELD = (_total_divs / _avg_price) / _jepq_n_years
+        print(f"  JEPQ distribution yield calibrated to {JEPQ_DIST_YIELD*100:.2f}%/yr "
+              f"from {len(_real_divs)} real distributions")
+    else:
+        print(f"  JEPQ distribution yield: using fallback {JEPQ_DIST_YIELD*100:.1f}%/yr")
+
+# JEPQ synthesis: two-phase backward walk (same chain as TQQQ/QLD/QQQ5).
+# leverage=1, no rate_map (no borrowed leg), expense includes CC drag.
+_jepq_effective_daily = JEPQ_EXPENSE_DAILY + JEPQ_CC_DRAG_DAILY
+jepq_phase1_rows, jepq_phase1_pairs = walk_backward(
+    ndx_tr_pairs,
+    anchor_date=jepq_df.index[0],
+    anchor_price=cell(jepq_df['Close'].iloc[0]),
+    leverage=1,
+    expense_daily=_jepq_effective_daily,
+)
+if jepq_phase1_pairs:
+    _jp2_d, _jp2_p = jepq_phase1_pairs[0]
+    jepq_phase2_rows, jepq_phase2_pairs = walk_backward(
+        ndx_pairs, _jp2_d, _jp2_p,
+        leverage=1, expense_daily=_jepq_effective_daily,
+    )
+    jepq_prefix_rows  = jepq_phase2_rows  + jepq_phase1_rows
+    jepq_prefix_pairs = jepq_phase2_pairs + jepq_phase1_pairs
+else:
+    jepq_prefix_rows  = jepq_phase1_rows
+    jepq_prefix_pairs = jepq_phase1_pairs
+
+
 prefix_by_ticker = {'QQQ': qqq_prefix_rows, 'QLD': qld_prefix_rows,
                     'TQQQ': tqqq_prefix_rows, 'SPY': spy_prefix_rows,
                     'SSO': sso_prefix_rows, 'SPXL': spxl_prefix_rows,
-                    'QQQ5.L': qqq5_prefix_rows}
+                    'QQQ5.L': qqq5_prefix_rows, 'JEPQ': jepq_prefix_rows}
 real_by_ticker   = {'QQQ': qqq_df, 'QLD': qld_df, 'TQQQ': tqqq_df, 'SPY': spy_df,
                     'SSO': sso_df, 'SPXL': spxl_df,
-                    'QQQ5.L': qqq5_df}
+                    'QQQ5.L': qqq5_df, 'JEPQ': jepq_df}
 
 data_dir = os.path.join(basedir, DATA_DIR)
 os.makedirs(data_dir, exist_ok=True)
@@ -757,6 +952,17 @@ for ticker, filename in tickers:
         start = data.index[0].strftime('%Y-%m-%d')
         end = data.index[-1].strftime('%Y-%m-%d')
         print(f"  {filename}: {len(data)} rows, {start} to {end}")
+
+# === Write JEPQ distributions TSV =========================================
+_jepq_dist_prefix = build_jepq_distribution_prefix(jepq_prefix_pairs, JEPQ_DIST_YIELD)
+_jepq_real_divs   = _real_divs if '_real_divs' in dir() and _real_divs else fetch_jepq_real_dividends()
+write_jepq_distributions_tsv(
+    os.path.join(data_dir, 'jepq-distributions.tsv'),
+    _jepq_dist_prefix,
+    _jepq_real_divs,
+)
+print(f"  jepq-distributions.tsv: {len(_jepq_dist_prefix)} synthetic + "
+      f"{len(_jepq_real_divs)} real distributions")
 
 # === Write rate files =====================================================
 # Same TSV format as the price files so they're trivial to load with the same

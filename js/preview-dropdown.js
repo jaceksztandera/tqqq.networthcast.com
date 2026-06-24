@@ -29,6 +29,11 @@
     'select-9sig-spike':      { kind: '9sig', apply: (p, v) => { p.spikeTriggerPct = +v; } },
     'select-9sig-buypower':   { kind: '9sig', apply: (p, v) => { p.buyThrottlePct = +v; } },
     'select-9sig-park-asset': { kind: '9sig', apply: (p, v) => { p.parkAsset = v; } },
+
+    'select-fixed-stock':      { kind: 'fixed', apply: (p, v) => { p.stockPct = +v; } },
+    'select-fixed-underlying': { kind: 'fixed', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : 1; } },
+    'select-fixed-period':     { kind: 'fixed', apply: (p, v) => { p.rebalancePeriod = v; } },
+    'select-fixed-cashrate':   { kind: 'fixed', apply: (p, v) => { p.cashRate = (+v || 0) / 100; } },
     'select-bh-underlying':   { kind: 'bh' },
     'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
     'select-sma-asset':       { kind: 'sma', apply: (p, v) => { p.smaAsset = v; } },
@@ -43,6 +48,11 @@
     'select-sma-dca-to-out':  { kind: 'sma', apply: (p, v) => { p.dcaToOutMonths = +v; } },
     'select-sma-bg-delev':    { kind: 'sma', apply: (p, v) => { p.bgDelevPct = +v; } },
     'select-sma-bg-gtfo':     { kind: 'sma', apply: (p, v) => { p.bgGtfoPct = +v; } },
+
+    'select-tqqj-underlying': { kind: 'tqqj', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
+    'select-tqqj-split':      { kind: 'tqqj', apply: (p, v) => { p.ulPct = +v / 100; } },
+    'select-tqqj-threshold':  { kind: 'tqqj', apply: (p, v) => { p.rebalanceThreshold = v === 'inf' ? Infinity : +v; } },
+    'select-tqqj-cooldown':   { kind: 'tqqj', apply: (p, v) => { p.rebalanceCooldownMonths = +v; } },
   };
   const PREVIEW_SELECT_IDS = Object.keys(PREVIEW_SELECTS);
 
@@ -66,12 +76,14 @@
   }
   const _num = (id, d) => { const el = document.getElementById(id); const n = el ? +el.value : NaN; return Number.isFinite(n) ? n : d; };
   const _str = (id, d) => { const el = document.getElementById(id); return el && el.value != null ? el.value : d; };
+  const _taxRate = () => ((document.getElementById('checkbox-taxable') || {}).checked) ? ((_num('slider-tax', 0) || 0) / 100) : 0;
 
   function read9sigParams() {
     return Object.assign(readBaseParams(), {
       baselineRate:  sliderToRate(+document.getElementById('slider-rate').value) / 100,
-      cashRate:      _num('select-9sig-cashrate', 0) / 100,
+      cashRate:      _num('select-9sig-cashrate', 3.14) / 100,
       underlyingCol: (function () { const v = _str('select-9sig-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
+      taxRate:       _taxRate(),
       qGrowth:       _num('select-9sig-growth', 9) / 100,
       crashDropPct:  _num('select-9sig-crashdrop', 30),
       crashLookbackMonths: _num('select-9sig-crashwin', 24),
@@ -87,8 +99,9 @@
 
   function readSmaParams() {
     return Object.assign(readBaseParams(), {
-      cashRate:      _num('select-sma-cashrate', 0) / 100,
+      cashRate:      _num('select-sma-cashrate', 3.14) / 100,
       underlyingCol: (function () { const v = _str('select-sma-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
+      taxRate:       _taxRate(),
       smaAsset:      _str('select-sma-asset', 'qqq'),
       smaWindow:     _num('select-sma-window', 200),
       entryBufferPct: _num('select-sma-entry-buf', 0),
@@ -102,10 +115,28 @@
       bgGtfoPct:  _num('select-sma-bg-gtfo', 0),
     });
   }
+  function readFixedParams() {
+    return Object.assign(readBaseParams(), {
+      cashRate:      _num('select-fixed-cashrate', 3.14) / 100,
+      underlyingCol: _str('select-fixed-underlying', 'tqqq') === 'qqq5' ? 5 : 1,
+      taxRate:       _taxRate(),
+      stockPct:      _num('select-fixed-stock', 75),
+      rebalancePeriod: _str('select-fixed-period', 'quarterly'),
+    });
+  }
+  function readTqqjParams() {
+    return Object.assign(readBaseParams(), {
+      taxRate:       _taxRate(),
+      underlyingCol: (function() { const v = _str('select-tqqj-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
+      ulPct:         _num('select-tqqj-split', 50) / 100,
+      rebalanceThreshold: (function() { const v = _str('select-tqqj-threshold', '1.5'); return v === 'inf' ? Infinity : +v; })(),
+      rebalanceCooldownMonths: _num('select-tqqj-cooldown', 0),
+    });
+  }
 
   function nineSigFinal(p) {
     const r = simulate(p.initial, p.monthly, p.cashRate, p.simEntryIdx, p.exitIdx, p.annualRaise, {
-      qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, crashDropPct: p.crashDropPct,
+      qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, taxRate: p.taxRate, crashDropPct: p.crashDropPct,
       crashLookbackMonths: p.crashLookbackMonths, spikeTriggerPct: p.spikeTriggerPct,
       rebalancePeriod: p.rebalancePeriod, cashPct: p.cashPct, contribDeployPct: p.contribDeployPct,
       buyThrottlePct: p.buyThrottlePct, parkAsset: p.parkAsset, baselineRate: p.baselineRate, skipBH: true,
@@ -114,7 +145,7 @@
   }
   function smaFinal(p) {
     const r = simulateSMA(p.initial, p.monthly, p.cashRate, p.simEntryIdx, p.exitIdx, p.annualRaise, {
-      smaAsset: p.smaAsset, smaWindow: p.smaWindow, underlyingCol: p.underlyingCol,
+      smaAsset: p.smaAsset, smaWindow: p.smaWindow, underlyingCol: p.underlyingCol, taxRate: p.taxRate,
       entryBufferPct: p.entryBufferPct, exitBufferPct: p.exitBufferPct,
       rsiOverheatThreshold: p.rsiOverheatThreshold, rsiCoolThreshold: p.rsiCoolThreshold,
       outAsset: p.outAsset, dcaInMonths: p.dcaInMonths, dcaToOutMonths: p.dcaToOutMonths,
@@ -122,11 +153,28 @@
     });
     return (r.smaPoints && r.smaPoints.length) ? r.smaPoints[r.smaPoints.length - 1].value : 0;
   }
+  function fixedFinal(p) {
+    const r = simulateFixedSplit(p.initial, p.monthly, p.cashRate, p.simEntryIdx, p.exitIdx, p.annualRaise, {
+      underlyingCol: p.underlyingCol, taxRate: p.taxRate, stockPct: p.stockPct,
+      rebalancePeriod: p.rebalancePeriod,
+    });
+    return (r.fixedPoints && r.fixedPoints.length) ? r.fixedPoints[r.fixedPoints.length - 1].value : 0;
+  }
+  function tqqjFinal(p) {
+    const r = simulateTQQQJEPQ(p.initial, p.monthly, 0, p.simEntryIdx, p.exitIdx, p.annualRaise, {
+      rebalanceThreshold: p.rebalanceThreshold,
+      taxRate: p.taxRate,
+      underlyingCol: p.underlyingCol,
+      ulPct: p.ulPct,
+      rebalanceCooldownMonths: p.rebalanceCooldownMonths,
+    });
+    return (r.tqqjPoints && r.tqqjPoints.length) ? r.tqqjPoints[r.tqqjPoints.length - 1].value : 0;
+  }
   // One 9sig sim (no skipBH) yields all four Buy & Hold finals at once.
   function bhFinals() {
     const p = read9sigParams();
     const r = simulate(p.initial, p.monthly, p.cashRate, p.simEntryIdx, p.exitIdx, p.annualRaise, {
-      qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, crashDropPct: p.crashDropPct,
+      qGrowth: p.qGrowth, underlyingCol: p.underlyingCol, taxRate: p.taxRate, crashDropPct: p.crashDropPct,
       crashLookbackMonths: p.crashLookbackMonths, spikeTriggerPct: p.spikeTriggerPct,
       rebalancePeriod: p.rebalancePeriod, cashPct: p.cashPct, contribDeployPct: p.contribDeployPct,
       buyThrottlePct: p.buyThrottlePct, parkAsset: p.parkAsset, baselineRate: p.baselineRate,
@@ -143,8 +191,8 @@
       const f = bhFinals();
       return opts.map(o => f[o.value] || 0);
     }
-    const read = spec.kind === 'sma' ? readSmaParams : read9sigParams;
-    const run  = spec.kind === 'sma' ? smaFinal : nineSigFinal;
+    const read = spec.kind === 'tqqj' ? readTqqjParams : spec.kind === 'sma' ? readSmaParams : spec.kind === 'fixed' ? readFixedParams : read9sigParams;
+    const run  = spec.kind === 'tqqj' ? tqqjFinal : spec.kind === 'sma' ? smaFinal : spec.kind === 'fixed' ? fixedFinal : nineSigFinal;
     const base = read();
     return opts.map(o => {
       const p = Object.assign({}, base);
