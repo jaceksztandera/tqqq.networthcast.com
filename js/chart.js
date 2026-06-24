@@ -13,6 +13,7 @@ let _logData = null;
 const LEGEND_ORDER = [
   0,  // 9sig
   8,  // SMA
+  14, // TQQQ/JEPQ 50/50
   13, // Fixed Split
   2,  // Buy & Hold — dataset 2's label + data swap based on
       // #select-bh-underlying (TQQQ / QQQ / SPY / QQQ5).
@@ -410,6 +411,42 @@ function buildFixedLogTableHtml(rows) {
     </div>`;
 }
 
+function buildTqqjLogTableHtml(rows, ulLabel) {
+  if (!rows || !rows.length) return '';
+  ulLabel = ulLabel || 'UL';
+  const lastIdx = rows.length - 1;
+  const body = rows.map((l, i) => {
+    const ac = l.action.startsWith('REBAL') ? 'action-sell'
+             : l.action === 'HOLD'          ? 'action-hold'
+             :                               'action-buy';
+    return `<tr${i === lastIdx ? ' class="log-latest"' : ''}>
+      <td>${fmtLogDate(l.date)}</td>
+      <td>${fmtLogShares(l.ulShares)}</td>
+      <td>${fmtFull(Math.round(l.ulVal))}</td>
+      <td>${fmtLogShares(l.jepqShares)}</td>
+      <td>${fmtFull(Math.round(l.jepqVal))}</td>
+      <td>${fmtGainCell(l.realizedGain)}</td>
+      <td>${fmtTaxCell(l.taxPaid)}</td>
+      <td>${fmtFull(Math.round(l.total))}</td>
+      <td class="${ac} log-action">${l.action}${latestBadge(i === lastIdx)}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="strategy-panel-section-label" style="margin-top:24px">Rebalance Log</div>
+    <div class="quarter-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>${ulLabel} Shares</th><th>${ulLabel} Val</th>
+            <th>JEPQ Shares</th><th>JEPQ Val</th>
+            <th>Realized Gain</th><th>Tax</th><th>Total</th><th class="log-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
 // Render the 4-stat grid (CAGR / Start / End / Max DD) for one dataset idx.
 // Stats come from window._strategyMetrics, populated each render(). Returns
 // an empty string when there are no metrics for the idx.
@@ -466,6 +503,7 @@ const PANEL_LIVE_CONTROLS = {
   7: ['invested-controls'],                  // Invested Compounded sidebar: the cash interest-rate slider
   8: ['sma-controls'],                       // SMA sidebar: asset + window + underlying selectors
   13: ['fixed-controls'],                    // Fixed Split sidebar: allocation, underlying, cadence, cash rate
+  14: ['tqqj-controls'],                     // TQQQ/JEPQ 50/50: rebalance threshold slider
 };
 const ALL_LIVE_CONTROL_IDS = Array.from(
   new Set(Object.values(PANEL_LIVE_CONTROLS).flat())
@@ -583,6 +621,9 @@ function renderStrategyPanelBody(idx) {
   if (idx === 13 && _logData && _logData.fixedLog) {
     html += buildFixedLogTableHtml(_logData.fixedLog);
   }
+  if (idx === 14 && _logData && _logData.tqqjLog) {
+    html += buildTqqjLogTableHtml(_logData.tqqjLog, _logData.tqqjUlLabel || 'TQQQ');
+  }
   body.innerHTML = html;
   // Re-attach live control nodes for this idx (if any). Configuration
   // controls live at the TOP of the panel — above stats/rules/log — so they
@@ -677,8 +718,8 @@ function attemptCloseStrategyPanel() {
 // Stable keys for the openable strategy panels, so a share link can capture
 // which sidebar was open without depending on dataset indices (which shift
 // between versions). Used by shareConfig (controls.js) + restore (init.js).
-const PANEL_KEY_BY_IDX = { 0: '9sig', 2: 'bh', 7: 'invested', 8: 'sma', 13: 'fixed' };
-const PANEL_IDX_BY_KEY = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8, 'fixed': 13 };
+const PANEL_KEY_BY_IDX = { 0: '9sig', 2: 'bh', 7: 'invested', 8: 'sma', 13: 'fixed', 14: 'tqqj' };
+const PANEL_IDX_BY_KEY = { '9sig': 0, 'bh': 2, 'invested': 7, 'sma': 8, 'fixed': 13, 'tqqj': 14 };
 function getOpenPanelKey() {
   return (_currentPanelIdx != null) ? (PANEL_KEY_BY_IDX[_currentPanelIdx] || null) : null;
 }
@@ -1057,6 +1098,23 @@ function render() {
   });
   const fixedLog = fixedSim.log || [];
   const fixedPoints = fixedSim.fixedPoints || [];
+  const tqqjUlKey = ((document.getElementById('select-tqqj-underlying') || {}).value) || 'tqqq';
+  const _TQQJ_UL_COL_MAP = { tqqq: 1, qld: 4, qqq5: 5, sso: 6, spxl: 7 };
+  const tqqjUlCol = _TQQJ_UL_COL_MAP[tqqjUlKey] || 1;
+  const tqqjUlLabel = tqqjUlKey.toUpperCase();
+  const tqqjSplitPct = +((document.getElementById('select-tqqj-split') || {}).value || 50);
+  const _rebalStr = ((document.getElementById('select-tqqj-threshold') || {}).value) || '1.5';
+  const rebalThreshold = _rebalStr === 'inf' ? Infinity : +_rebalStr;
+  const tqqjCooldown = +((document.getElementById('select-tqqj-cooldown') || {}).value || 0);
+  const tqqjSim = simulateTQQQJEPQ(initial, monthly, 0, simEntryIdx, exitIdx, annualRaise, {
+    rebalanceThreshold: rebalThreshold,
+    taxRate,
+    underlyingCol: tqqjUlCol,
+    ulPct: tqqjSplitPct / 100,
+    rebalanceCooldownMonths: tqqjCooldown,
+  });
+  const tqqjLog = tqqjSim.log || [];
+  const tqqjPoints = tqqjSim.tqqjPoints || [];
 
   // The base envelope is the MAIN 9sig line's own alternate runs, gated by its own
   // session flag — independent of any saved strategy's envelope. Visibility is
@@ -1136,6 +1194,7 @@ function render() {
   const finalSPXL = spxlPoints && spxlPoints.length ? spxlPoints[spxlPoints.length - 1].value : 0;
   const finalSMA  = smaPoints  && smaPoints.length  ? smaPoints[smaPoints.length - 1].value   : 0;
   const finalFixed = fixedPoints && fixedPoints.length ? fixedPoints[fixedPoints.length - 1].value : 0;
+  const finalTqqj  = tqqjPoints  && tqqjPoints.length  ? tqqjPoints[tqqjPoints.length - 1].value   : 0;
   const years = log.length > 1 ? (new Date(log[log.length-1].date) - new Date(log[0].date)) / (365.25*86400000) : 1;
   // Simple end/start growth — kept for the sub-series fallback (their CAGR is the
   // annualized growth of their own balance, not a contribution-based return).
@@ -1157,6 +1216,7 @@ function render() {
   const retSPXL = _mw(finalSPXL);
   const retSMA  = _mw(finalSMA);
   const retFixed = _mw(finalFixed);
+  const retTqqj  = _mw(finalTqqj);
   const retInv = _mw(finalLog.investedCompounded);
 
   // Consolidated Buy & Hold chip (dataset 2) — picks one of the four B&H
@@ -1182,6 +1242,7 @@ function render() {
   const LBL_9SIG = '9sig';
   const LBL_SMA  = 'SMA';
   const LBL_FIXED = 'Fixed Split';
+  const LBL_TQQJ  = (((document.getElementById('select-tqqj-underlying') || {}).value) || 'tqqq').toUpperCase() + '/JEPQ';
   // Buy & Hold spells out the underlying it's actually holding (default TQQQ →
   // "Buy & Hold TQQQ"; follows #select-bh-underlying when switched).
   const LBL_BH   = 'Buy & Hold ' + bhKey.toUpperCase();
@@ -1196,6 +1257,7 @@ function render() {
     7: retInv,
     8: retSMA,
     13: retFixed,
+    14: retTqqj,
   };
 
   // Chart. Series come from the display points (quarter snapshots for a yearly
@@ -1224,6 +1286,7 @@ function render() {
   const smaD  = smaAligned.map(p => p ? p.value : null);
   const smaStates = smaAligned.map(p => p ? p.state : null);
   const fixedD = resampleByDate((fixedPoints || []).map(p => ({ date: p.date, value: p.value })), labels);
+  const tqqjD  = resampleByDate((tqqjPoints  || []).map(p => ({ date: p.date, value: p.value })), labels);
   const invD = onLabels(sigPts, l => l.investedCompounded);
   const targetD = onLabels(sigPts, l => l.target);
   // Data fed into the consolidated B&H slot (dataset 2) — display points for the
@@ -1239,7 +1302,7 @@ function render() {
   const seriesByIdx = {
     0: totalD, 1: tqqqValD, 2: bhActiveD,
     5: targetD, 6: cashD, 7: invD, 8: smaD,
-    13: fixedD,
+    13: fixedD, 14: tqqjD,
   };
   const mainCagrIdx = window._cagrByDatasetIdx;
   // #3 Daily-sampled drawdown: revalue each holding at every daily close
@@ -1267,7 +1330,12 @@ function render() {
     }
     if (fixedLog && fixedLog.length) {
       dailyDDByIdx[13] = computeDailyMaxDrawdown(
-        fixedLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[fixedUlCol] || 'tqqq') * 100;
+        fixedLog.map(r => ({ date: r.date, shares: r.shares, cash: r.cash })), dailyRows, UL_KEY[fixedUlCol] || 'tqqq');
+    }
+    if (tqqjLog && tqqjLog.length) {
+      dailyDDByIdx[14] = computeDailyMaxDrawdown(
+        tqqjLog.map(r => ({ date: r.date, shares: r.ulShares, cash: 0, extraShares: r.jepqShares, extraKey: 'jepq' })),
+        dailyRows, tqqjUlKey);
     }
   }
   window._strategyMetrics = {};
@@ -1306,6 +1374,7 @@ function render() {
     chart.data.datasets[7].label = LBL_INV;
     chart.data.datasets[8].label = LBL_SMA;
     chart.data.datasets[13].label = LBL_FIXED;
+    chart.data.datasets[14].label = LBL_TQQJ;
     chart.data.datasets[0].data = totalD;
     chart.data.datasets[1].data = tqqqValD;
     chart.data.datasets[2].data = bhActiveD;
@@ -1324,8 +1393,9 @@ function render() {
     chart.data.datasets[11].data = []; chart.data.datasets[11].hidden = true;
     chart.data.datasets[12].data = []; chart.data.datasets[12].hidden = true;
     chart.data.datasets[13].data = fixedD;
-    while (chart.data.datasets.length < 14 + envelopeShiftCount) {
-      const offset = chart.data.datasets.length - 14;
+    chart.data.datasets[14].data = tqqjD;
+    while (chart.data.datasets.length < 15 + envelopeShiftCount) {
+      const offset = chart.data.datasets.length - 15;
       chart.data.datasets.push({
         label: '_shift_' + (offset + 1),
         data: [],
@@ -1341,7 +1411,7 @@ function render() {
       });
     }
     for (let i = 0; i < envelopeShiftCount; i++) {
-      const ds9 = chart.data.datasets[14 + i];
+      const ds9 = chart.data.datasets[15 + i];
       ds9.data = showBaseEnvelope ? (shiftResults[i] || []) : [];
       ds9.borderColor = envColor;
       ds9.hidden = !showBaseEnvelope;
@@ -1376,8 +1446,9 @@ function render() {
   //  11  B&H SSO       purple     #c084fc
   //  12  B&H SPXL      rose       #f43f5e
   //  13  Fixed Split   violet     #c084fc
-  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#6366f1', '#06b6d4', '#c084fc', '#f43f5e', '#c084fc'];
-  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QQQ5', 'B&H QLD', 'B&H SSO', 'B&H SPXL', LBL_FIXED];
+  //  14  TQQQ/JEPQ     amber-500  #f59e0b
+  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#6366f1', '#06b6d4', '#c084fc', '#f43f5e', '#c084fc', '#f59e0b'];
+  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QQQ5', 'B&H QLD', 'B&H SSO', 'B&H SPXL', LBL_FIXED, LBL_TQQJ];
   // Match the borderDash on the corresponding chart dataset; null = solid.
   //   2 B&H TQQQ   [6,3]       medium dash
   //   3 B&H QQQ    [8,4]       long dash
@@ -1386,7 +1457,7 @@ function render() {
   //  10 B&H QLD    [5,2,2,2]   dash-dot
   //  11 B&H SSO    [5,2,2,2]   dash-dot
   //  12 B&H SPXL   [5,2,2,2]   dash-dot
-  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2], [5,2,2,2], null];
+  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2], [5,2,2,2], null, null];
 
   // Touch / coarse-pointer detection — once at chart creation time. On those
   // devices Chart.js's tap-to-show tooltip is followed by an immediate
@@ -1755,6 +1826,18 @@ function render() {
           pointHitRadius: 10,
           borderWidth: 2,
         },
+        {
+          label: LBL_TQQJ,
+          data: tqqjD,
+          borderColor: '#f59e0b',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          borderWidth: 2,
+          hidden: true,
+        },
         ...Array.from({ length: envelopeShiftCount }, (_, i) => ({
           label: '_shift_' + (i + 1),
           data: showBaseEnvelope ? (shiftResults[i] || []) : [],
@@ -1838,7 +1921,7 @@ function render() {
   // Stash latest data for the side-panel log tables. Normally this is the
   // canonical base simulation; but when a saved strategy is open for editing the
   // panel describes THAT strategy, so swap in its (separately computed) sim.
-  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, smaLog, fixedLog };
+  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, smaLog, fixedLog, tqqjLog, tqqjUlLabel };
   if (window._editingConfigId && window._editingConfigSim) {
     const cs = window._editingConfigSim;
     _logData = {
@@ -1852,6 +1935,7 @@ function render() {
       spxlPoints: cs.spxlPoints || spxlPoints,
       smaLog:     cs.smaLog     || smaLog,
       fixedLog:   cs.fixedLog   || fixedLog,
+      tqqjLog:    cs.tqqjLog    || tqqjLog,
     };
   }
 

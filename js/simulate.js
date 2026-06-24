@@ -160,6 +160,193 @@ function simulateFixedSplit(initial, monthly, annualRate, entryIdx, exitIdx, ann
   };
 }
 
+// ETF/JEPQ paired strategy.
+//
+// Starts with the portfolio split between a growth ETF (col opts.underlyingCol,
+// default TQQQ col 1) and JEPQ (col 8) at opts.ulPct / (1-opts.ulPct) ratio
+// (default 50/50).  Each month:
+//   1. JEPQ distributes per-share income (from jepqDistributionMap). The net
+//      after tax is reinvested into whichever asset currently has the lower value.
+//   2. Monthly contribution (if any) is invested into the lesser-valued asset.
+//   3. If either leg's actual fraction >= rebalanceThreshold × its desired fraction,
+//      sell the excess of the larger position back to the configured ulPct target.
+//      Tax on realized gains is paid from the sale proceeds (FIFO).
+//   4. Rebalancing is skipped when fewer than rebalanceCooldownMonths have elapsed
+//      since the last rebalance (prevents whipsawing in volatile periods).
+//
+// All sells go through createTaxLots() at opts.taxRate (default 0).
+// opts.rebalanceThreshold      — overweight multiplier that triggers rebalancing (default 1.5).
+// opts.rebalanceCooldownMonths — minimum months between rebalances (default 0 = no cooldown).
+// opts.underlyingCol           — column index for the growth ETF (default 1 = TQQQ).
+// opts.ulPct                   — fraction of portfolio in growth ETF (default 0.5).
+// opts.jepqDistMap             — Map<YYYY-MM-DD, amountPerShare> (uses global
+//                                jepqDistributionMap if not provided).
+function simulateTQQQJEPQ(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
+  opts = opts || {};
+  annualRaise = annualRaise || 0;
+  const rebalThreshold    = opts.rebalanceThreshold != null ? +opts.rebalanceThreshold : 1.5;
+  const cooldownMonths    = opts.rebalanceCooldownMonths != null ? +opts.rebalanceCooldownMonths : 0;
+  const taxRate        = opts.taxRate != null ? +opts.taxRate : 0;
+  const ulPct          = opts.ulPct != null ? Math.max(0.01, Math.min(0.99, +opts.ulPct)) : 0.5;
+  const distMap        = opts.jepqDistMap ||
+    (typeof jepqDistributionMap !== 'undefined' ? jepqDistributionMap : new Map());
+  const monthlyRate    = (+annualRate || 0) / 12;
+
+  const UL_COL = opts.underlyingCol != null ? +opts.underlyingCol : 1;
+  const JEPQ_COL = 8;
+
+  // Map quarterly entry/exit to monthly indices
+  const mSlice = monthlyData ? monthlyData.slice() : [];
+  if (mSlice.length < 2) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  // Find monthly start/end dates from quarterly entry/exit
+  const entryDate = quarterlyData && quarterlyData[entryIdx] ? quarterlyData[entryIdx][0] : mSlice[0][0];
+  const exitDate  = quarterlyData && quarterlyData[exitIdx]  ? quarterlyData[exitIdx][0]  : mSlice[mSlice.length - 1][0];
+  const mStart = mSlice.findIndex(m => m[0] >= entryDate);
+  let   mEnd   = mSlice.length - 1;
+  for (let i = mSlice.length - 1; i >= 0; i--) { if (mSlice[i][0] <= exitDate) { mEnd = i; break; } }
+  if (mStart < 0 || mEnd <= mStart) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  const slice = mSlice.slice(mStart, mEnd + 1);
+
+  const p0u = slice[0][UL_COL] || 0;
+  const p0j = slice[0][JEPQ_COL] || 0;
+  if (!p0u || !p0j) return { log: [], tqqjPoints: [], totalContributed: initial };
+
+  const ulLots   = createTaxLots(taxRate);
+  const jepqLots = createTaxLots(taxRate);
+
+  let ulShares   = (initial * ulPct) / p0u;
+  let jepqShares = (initial * (1 - ulPct)) / p0j;
+  ulLots.buy(ulShares, p0u);
+  jepqLots.buy(jepqShares, p0j);
+
+  let totalInvested = initial;
+  let currentMonthly = monthly;
+  let lastRebalMonth = -9999;
+  const startYear = parseInt(slice[0][0].substring(0, 4));
+  const log = [];
+
+  function snapshot(date, pu, pj, action, taxInfo) {
+    const uv = ulShares * pu, jv = jepqShares * pj;
+    return {
+      date, ulPrice: pu, jepqPrice: pj,
+      ulShares, jepqShares,
+      ulVal: uv, jepqVal: jv,
+      total: uv + jv,
+      invested: totalInvested,
+      action,
+      realizedGain: (taxInfo && taxInfo.realizedGain) || 0,
+      taxPaid:      (taxInfo && taxInfo.taxPaid) || 0,
+    };
+  }
+
+  log.push(snapshot(slice[0][0], p0u, p0j, 'START', null));
+
+  for (let mi = 1; mi < slice.length; mi++) {
+    const m = slice[mi];
+    const date = m[0];
+    const pu = m[UL_COL] || 0;
+    const pj = m[JEPQ_COL] || 0;
+    if (!pu || !pj) continue;
+
+    const currentYear = parseInt(date.substring(0, 4));
+    currentMonthly = monthly * Math.pow(1 + annualRaise, currentYear - startYear);
+
+    const taxInfo = { realizedGain: 0, taxPaid: 0 };
+
+    // 1. JEPQ distribution — tax immediately, reinvest net into lesser asset
+    const distPerShare = distMap.get(date) || 0;
+    if (distPerShare > 0) {
+      const gross = jepqShares * distPerShare;
+      const tax   = gross * taxRate;
+      const net   = gross - tax;
+      taxInfo.taxPaid += tax;
+      if (net > 1e-9) {
+        const uv = ulShares * pu, jv = jepqShares * pj;
+        if (uv <= jv && pu > 0) {
+          const bought = net / pu;
+          ulShares += bought;
+          ulLots.buy(bought, pu);
+        } else if (pj > 0) {
+          const bought = net / pj;
+          jepqShares += bought;
+          jepqLots.buy(bought, pj);
+        }
+      }
+    }
+
+    // 2. Monthly contribution → lesser asset
+    if (currentMonthly > 0) {
+      const uv = ulShares * pu, jv = jepqShares * pj;
+      if (uv <= jv && pu > 0) {
+        const bought = currentMonthly / pu;
+        ulShares += bought;
+        ulLots.buy(bought, pu);
+      } else if (pj > 0) {
+        const bought = currentMonthly / pj;
+        jepqShares += bought;
+        jepqLots.buy(bought, pj);
+      }
+      totalInvested += currentMonthly;
+    }
+
+    // 3. Threshold-based rebalancing
+    let action = 'HOLD';
+    const uv = ulShares * pu, jv = jepqShares * pj;
+    const total_val = uv + jv;
+    const overweightTrigger = total_val > 1e-9 &&
+      Math.max(uv / (total_val * ulPct), jv / (total_val * (1 - ulPct))) >= rebalThreshold;
+    if (overweightTrigger && mi - lastRebalMonth >= Math.max(1, cooldownMonths)) {
+      // Iterative sell (same approach as simulateFixedSplit) to account for
+      // the fact that tax reduces proceeds, so the first sell slightly misses.
+      if (uv > jv) {
+        let sellAmt = 0;
+        for (let k = 0; k < 20; k++) {
+          const excess = ulShares * pu - (ulShares * pu + jepqShares * pj) * ulPct;
+          if (excess <= 1e-7) break;
+          const sold = Math.min(excess, ulShares * pu) / pu;
+          const t    = ulLots.sell(sold, pu);
+          ulShares -= sold;
+          const net = sold * pu - t.taxPaid;
+          const bought = net / pj;
+          jepqShares += bought;
+          jepqLots.buy(bought, pj);
+          sellAmt += sold * pu;
+          taxInfo.realizedGain += t.realizedGain;
+          taxInfo.taxPaid      += t.taxPaid;
+        }
+        if (sellAmt > 1e-9) { action = 'REBAL UL→JEPQ'; lastRebalMonth = mi; }
+      } else {
+        let sellAmt = 0;
+        for (let k = 0; k < 20; k++) {
+          const excess = jepqShares * pj - (ulShares * pu + jepqShares * pj) * (1 - ulPct);
+          if (excess <= 1e-7) break;
+          const sold = Math.min(excess, jepqShares * pj) / pj;
+          const t    = jepqLots.sell(sold, pj);
+          jepqShares -= sold;
+          const net = sold * pj - t.taxPaid;
+          const bought = net / pu;
+          ulShares += bought;
+          ulLots.buy(bought, pu);
+          sellAmt += sold * pj;
+          taxInfo.realizedGain += t.realizedGain;
+          taxInfo.taxPaid      += t.taxPaid;
+        }
+        if (sellAmt > 1e-9) { action = 'REBAL JEPQ→UL'; lastRebalMonth = mi; }
+      }
+    }
+
+    log.push(snapshot(date, pu, pj, action, taxInfo));
+  }
+
+  return {
+    log,
+    tqqjPoints: log.map(l => ({ date: l.date, value: l.total })),
+    totalContributed: totalInvested,
+  };
+}
+
 // SMA timing strategy: hold TQQQ while the signal asset (QQQ or SPY) closes
 // above its N-day simple moving average; flip to cash (earning the user's
 // configured rate) when it closes below. Monthly resolution — checks the

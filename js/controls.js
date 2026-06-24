@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','checkbox-taxable','slider-tax','slider-entry','slider-exit','select-bh-underlying','select-fixed-stock','select-fixed-underlying','select-fixed-period','select-fixed-cashrate','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','checkbox-taxable','slider-tax','slider-entry','slider-exit','select-bh-underlying','select-fixed-stock','select-fixed-underlying','select-fixed-period','select-fixed-cashrate','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo','select-tqqj-underlying','select-tqqj-split','select-tqqj-threshold','select-tqqj-cooldown'];
 const LS_KEY = '9sig-sliders';
 // Bump APP_VERSION whenever a backwards-incompatible change ships (a control
 // id is renamed, a default flips, a strategy is dropped). On mismatch we
@@ -8,7 +8,7 @@ const LS_KEY = '9sig-sliders';
 // nuking storage silently; the user clicks it when they're ready to load
 // the new defaults. If they've never visited before (no stored version),
 // we just record the current one without prompting.
-const APP_VERSION = 41; // bumped after merging fixed split/tax with 9sig park-asset support
+const APP_VERSION = 44; // bumped after JEPQ rebalance fixes, selects with preview dropdowns, cooldown
 // NOTE: when you change any js/*.js or styles.css, also bump the matching ?v=
 // cache-bust query on the <script>/<link> tags in index.html (keep it equal to
 // APP_VERSION) so returning browsers fetch the new files instead of stale cache.
@@ -149,6 +149,10 @@ function saveSliders() {
 document.getElementById('checkbox-taxable').addEventListener('change', () => {
   saveSliders();
   render();
+});
+['select-tqqj-underlying','select-tqqj-split','select-tqqj-threshold','select-tqqj-cooldown'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => { saveSliders(); render(); });
 });
 ['select-bh-underlying','select-fixed-stock','select-fixed-underlying','select-fixed-period','select-fixed-cashrate','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
   const el = document.getElementById(id);

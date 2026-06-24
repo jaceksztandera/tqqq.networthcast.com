@@ -47,17 +47,43 @@ async function loadQQQ5Daily() {
   return parseDataFile(await resp.text());
 }
 
+async function loadJEPQDaily() {
+  const resp = await fetch('data/synthetic-jepq.tsv?v=baked');
+  return parseDataFile(await resp.text());
+}
+
+// Per-share monthly distributions for JEPQ. Keyed by YYYY-MM-DD (month-end date).
+let jepqDistributionMap = new Map();
+
+async function loadJEPQDistributions() {
+  const resp = await fetch('data/jepq-distributions.tsv?v=baked');
+  const text = await resp.text();
+  const lines = text.trim().split(/\r?\n/).slice(1);
+  const result = [];
+  for (const line of lines) {
+    const [dateStr, amount] = line.split('\t');
+    if (!dateStr || !amount) continue;
+    const parts = dateStr.split(' ')[0].split('/');
+    const m = parts[0].padStart(2, '0');
+    const d = parts[1].padStart(2, '0');
+    const y = parts[2];
+    result.push({ date: y + '-' + m + '-' + d, amountPerShare: parseFloat(amount) });
+  }
+  return result;
+}
+
 // Merge daily TSVs by date. The synthetic TSVs already contain synthesized
 // pre-inception rows (baked by update_data.py), so this is a straight join —
 // no synthesis here. monthlyData column layout:
-//   [date, tqqq, qqq, spy, qld, qqq5, sso, spxl]   (cols 0..7)
-function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily, qldDaily, ssoDaily, spxlDaily) {
+//   [date, tqqq, qqq, spy, qld, qqq5, sso, spxl, jepq]   (cols 0..8)
+function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily, qldDaily, ssoDaily, spxlDaily, jepqDaily) {
   const tqqqMap = new Map(tqqqDaily.map(d => [d[0], d[1]]));
   const spyMap  = new Map(spyDaily.map(d => [d[0], d[1]]));
   const qqq5Map = qqq5Daily ? new Map(qqq5Daily.map(d => [d[0], d[1]])) : null;
   const qldMap  = qldDaily  ? new Map(qldDaily.map(d  => [d[0], d[1]])) : null;
   const ssoMap  = ssoDaily  ? new Map(ssoDaily.map(d  => [d[0], d[1]])) : null;
   const spxlMap = spxlDaily ? new Map(spxlDaily.map(d => [d[0], d[1]])) : null;
+  const jepqMap = jepqDaily ? new Map(jepqDaily.map(d => [d[0], d[1]])) : null;
   const result = [];
   for (const [date, qqqPrice] of qqqDaily) {
     const tqqqPrice = tqqqMap.get(date);
@@ -71,6 +97,7 @@ function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily, qldDaily, ssoDaily
         qqq5: qqq5Map ? (qqq5Map.get(date) || 0) : 0,
         sso:  ssoMap  ? (ssoMap.get(date)  || 0) : 0,
         spxl: spxlMap ? (spxlMap.get(date) || 0) : 0,
+        jepq: jepqMap ? (jepqMap.get(date) || 0) : 0,
       });
     }
   }
@@ -140,7 +167,7 @@ let monthlyByQuarter = null;
 // for the named period. Mirrors the existing monthlyData / quarterlyData
 // shape — same columns, same date format. Called once after `daily` loads.
 function buildPeriodData(periodFn) {
-  return lastOfPeriod(daily, periodFn).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl]);
+  return lastOfPeriod(daily, periodFn).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl, d.jepq]);
 }
 
 // Build the months-in-period index for the given periodData. monthsInPeriod[i]
@@ -273,7 +300,7 @@ function getShiftedPeriodData(period, dayShift) {
     if (naturalIdx == null) return p;
     const shiftedIdx = Math.max(0, naturalIdx - dayShift);
     const d = daily[shiftedIdx];
-    return [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl];
+    return [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl, d.jepq];
   });
 }
 
@@ -297,7 +324,7 @@ function buildEnvelopeQData(period, dayOffset, entryDate, exitDate) {
   if (entryDailyIdx == null) return [];
   const periodDays = PERIOD_DAYS[period] || 63;
   const entryD = daily[entryDailyIdx];
-  const rowFor = (d) => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl];
+  const rowFor = (d) => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl, d.jepq];
   const result = [rowFor(entryD)];
   let dailyIdx = entryDailyIdx + Math.max(1, dayOffset);
   while (dailyIdx < daily.length) {

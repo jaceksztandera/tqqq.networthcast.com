@@ -71,8 +71,10 @@ const STRATEGY_REGISTRY = {
                  }
                  return minQ;
                } },
-  'fixed':   { label: 'Fixed Split', pointsKey: 'fixedPoints', valueOf: (p) => p.value, prependStart: false,
+  'fixed':     { label: 'Fixed Split',    pointsKey: 'fixedPoints', valueOf: (p) => p.value, prependStart: false,
                earliestQIdxFn: () => _earliestQIdxForUnderlyingSelect('select-fixed-underlying') },
+  'tqqq-jepq': { label: 'TQQQ/JEPQ 50/50', pointsKey: 'tqqjPoints', valueOf: (p) => p.value, prependStart: false,
+                 labelFn: () => { const ul = ((document.getElementById('select-tqqj-underlying') || {}).value || 'tqqq').toUpperCase(); return `${ul}/JEPQ`; } },
 };
 
 // Earliest quarterly index where each strategy has usable history. Computed
@@ -144,7 +146,8 @@ const STRATEGY_KEY_TO_DATASET_IDX = {
   'bh-qld':  10,
   'bh-sso':  11,
   'bh-spxl': 12,
-  'fixed':   13, // envelope shifts start at 14
+  'fixed':      13,
+  'tqqq-jepq':  14, // envelope shifts start at 15
 };
 
 // Reverse map. Cheap to build at module load.

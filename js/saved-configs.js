@@ -477,7 +477,7 @@ function buildCustomPrompt(desc) {
 let _customDataCache = null;
 function buildCustomData() {
   if (_customDataCache) return _customDataCache;
-  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], qqq5: [], sso: [], spxl: [] };
+  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], qqq5: [], sso: [], spxl: [], jepq: [] };
   _customDataCache = {
     dates: daily.map(d => d.date),
     tqqq:  daily.map(d => d.tqqq),
@@ -487,6 +487,7 @@ function buildCustomData() {
     qqq5:  daily.map(d => d.qqq5),
     sso:   daily.map(d => d.sso),
     spxl:  daily.map(d => d.spxl),
+    jepq:  daily.map(d => d.jepq),
   };
   return _customDataCache;
 }

@@ -48,6 +48,11 @@
     'select-sma-dca-to-out':  { kind: 'sma', apply: (p, v) => { p.dcaToOutMonths = +v; } },
     'select-sma-bg-delev':    { kind: 'sma', apply: (p, v) => { p.bgDelevPct = +v; } },
     'select-sma-bg-gtfo':     { kind: 'sma', apply: (p, v) => { p.bgGtfoPct = +v; } },
+
+    'select-tqqj-underlying': { kind: 'tqqj', apply: (p, v) => { p.underlyingCol = v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; } },
+    'select-tqqj-split':      { kind: 'tqqj', apply: (p, v) => { p.ulPct = +v / 100; } },
+    'select-tqqj-threshold':  { kind: 'tqqj', apply: (p, v) => { p.rebalanceThreshold = v === 'inf' ? Infinity : +v; } },
+    'select-tqqj-cooldown':   { kind: 'tqqj', apply: (p, v) => { p.rebalanceCooldownMonths = +v; } },
   };
   const PREVIEW_SELECT_IDS = Object.keys(PREVIEW_SELECTS);
 
@@ -119,6 +124,15 @@
       rebalancePeriod: _str('select-fixed-period', 'quarterly'),
     });
   }
+  function readTqqjParams() {
+    return Object.assign(readBaseParams(), {
+      taxRate:       _taxRate(),
+      underlyingCol: (function() { const v = _str('select-tqqj-underlying', 'tqqq'); return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; })(),
+      ulPct:         _num('select-tqqj-split', 50) / 100,
+      rebalanceThreshold: (function() { const v = _str('select-tqqj-threshold', '1.5'); return v === 'inf' ? Infinity : +v; })(),
+      rebalanceCooldownMonths: _num('select-tqqj-cooldown', 0),
+    });
+  }
 
   function nineSigFinal(p) {
     const r = simulate(p.initial, p.monthly, p.cashRate, p.simEntryIdx, p.exitIdx, p.annualRaise, {
@@ -146,6 +160,16 @@
     });
     return (r.fixedPoints && r.fixedPoints.length) ? r.fixedPoints[r.fixedPoints.length - 1].value : 0;
   }
+  function tqqjFinal(p) {
+    const r = simulateTQQQJEPQ(p.initial, p.monthly, 0, p.simEntryIdx, p.exitIdx, p.annualRaise, {
+      rebalanceThreshold: p.rebalanceThreshold,
+      taxRate: p.taxRate,
+      underlyingCol: p.underlyingCol,
+      ulPct: p.ulPct,
+      rebalanceCooldownMonths: p.rebalanceCooldownMonths,
+    });
+    return (r.tqqjPoints && r.tqqjPoints.length) ? r.tqqjPoints[r.tqqjPoints.length - 1].value : 0;
+  }
   // One 9sig sim (no skipBH) yields all four Buy & Hold finals at once.
   function bhFinals() {
     const p = read9sigParams();
@@ -167,8 +191,8 @@
       const f = bhFinals();
       return opts.map(o => f[o.value] || 0);
     }
-    const read = spec.kind === 'sma' ? readSmaParams : spec.kind === 'fixed' ? readFixedParams : read9sigParams;
-    const run  = spec.kind === 'sma' ? smaFinal : spec.kind === 'fixed' ? fixedFinal : nineSigFinal;
+    const read = spec.kind === 'tqqj' ? readTqqjParams : spec.kind === 'sma' ? readSmaParams : spec.kind === 'fixed' ? readFixedParams : read9sigParams;
+    const run  = spec.kind === 'tqqj' ? tqqjFinal : spec.kind === 'sma' ? smaFinal : spec.kind === 'fixed' ? fixedFinal : nineSigFinal;
     const base = read();
     return opts.map(o => {
       const p = Object.assign({}, base);
