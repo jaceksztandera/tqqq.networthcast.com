@@ -72,17 +72,17 @@ ck('Monthly slider maps first nonzero position to $50',
 ck('Monthly slider caps at $1M',
    typeof sliderToMonthly === 'function' && sliderToMonthly(1000) === 1000000);
 ck('Monthly slider round-trips a small contribution through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(500)) === 500);
+   sliderToMonthly(monthlyToSlider(500)) === 500);
 ck('Monthly slider round-trips $1,250 through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(1250)) === 1250);
+   sliderToMonthly(monthlyToSlider(1250)) === 1250);
 ck('Monthly slider round-trips $1,450 through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(1450)) === 1450);
+   sliderToMonthly(monthlyToSlider(1450)) === 1450);
 ck('Monthly slider round-trips $1,500 through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(1500)) === 1500);
+   sliderToMonthly(monthlyToSlider(1500)) === 1500);
 ck('Monthly slider round-trips $1,600 through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(1600)) === 1600);
+   sliderToMonthly(monthlyToSlider(1600)) === 1600);
 ck('Monthly slider round-trips the maximum contribution through dollar storage',
-   typeof sliderToMonthly === 'function' && typeof monthlyToSlider === 'function' && sliderToMonthly(monthlyToSlider(1000000)) === 1000000);
+   sliderToMonthly(monthlyToSlider(1000000)) === 1000000);
 
 // ----- Buy & Hold -----
 install(flat);
