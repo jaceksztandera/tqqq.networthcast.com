@@ -8,7 +8,7 @@ const LS_KEY = '9sig-sliders';
 // nuking storage silently; the user clicks it when they're ready to load
 // the new defaults. If they've never visited before (no stored version),
 // we just record the current one without prompting.
-const APP_VERSION = 39; // bumped when Monthly Contribution switched to a curved slider
+const APP_VERSION = 23; // bumped when 9sig got a park-asset option (safety side as QQQ/SPY/QLD/TQQQ/SSO/SPXL/QQQ5 instead of cash)
 // NOTE: when you change any js/*.js or styles.css, also bump the matching ?v=
 // cache-bust query on the <script>/<link> tags in index.html (keep it equal to
 // APP_VERSION) so returning browsers fetch the new files instead of stale cache.

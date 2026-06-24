@@ -171,7 +171,7 @@
   // param at all, which means "fall back to localStorage / defaults".
   if (hd !== null && chart) {
     applyHiddenList(hd === '' ? [] : hd.split(','));
-  } else if (chart) {
+  } else if (chart && !skipLS) {
     try {
       const saved = JSON.parse(localStorage.getItem(LS_KEY));
       if (saved && Array.isArray(saved['hidden-datasets'])) {

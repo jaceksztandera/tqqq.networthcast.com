@@ -91,26 +91,21 @@ function initialToSlider(v) {
 // slider 1-1000 maps to $50-$1M with contribution-friendly rounding.
 const MONTHLY_MIN = 50;
 const MONTHLY_MAX = 1000000;
-const MONTHLY_MIN_LOG = Math.log10(MONTHLY_MIN);
-const MONTHLY_MAX_LOG = Math.log10(MONTHLY_MAX);
+const MONTHLY_LOG_MIN   = Math.log10(MONTHLY_MIN);
+const MONTHLY_LOG_RANGE = Math.log10(MONTHLY_MAX) - MONTHLY_LOG_MIN;
+const MONTHLY_TIERS     = [[1500, 50], [10000, 100], [100000, 1000], [Infinity, 10000]];
 
 function sliderToMonthly(s) {
-  if (s <= 0) return 0;
-  const clamped = Math.max(1, Math.min(1000, s));
-  const norm = (clamped - 1) / 999;
-  const raw = Math.pow(10, MONTHLY_MIN_LOG + norm * (MONTHLY_MAX_LOG - MONTHLY_MIN_LOG));
-  if (raw < 1500) return Math.round(raw / 50) * 50;
-  if (raw < 10000) return Math.round(raw / 100) * 100;
-  if (raw < 100000) return Math.round(raw / 1000) * 1000;
-  if (raw < 1000000) return Math.round(raw / 10000) * 10000;
-  return MONTHLY_MAX;
+  if (!Number.isFinite(s) || s <= 0) return 0;
+  const raw = 10 ** (MONTHLY_LOG_MIN + ((Math.min(s, 1000) - 1) / 999) * MONTHLY_LOG_RANGE);
+  const [, step] = MONTHLY_TIERS.find(([cap]) => raw < cap);
+  return Math.min(MONTHLY_MAX, Math.round(raw / step) * step);
 }
 
 function monthlyToSlider(v) {
-  if (v <= 0) return 0;
-  const clamped = Math.max(MONTHLY_MIN, Math.min(MONTHLY_MAX, v));
-  const norm = (Math.log10(clamped) - MONTHLY_MIN_LOG) / (MONTHLY_MAX_LOG - MONTHLY_MIN_LOG);
-  return Math.max(1, Math.min(1000, Math.round(1 + norm * 999)));
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  const norm = (Math.log10(Math.min(v, MONTHLY_MAX)) - MONTHLY_LOG_MIN) / MONTHLY_LOG_RANGE;
+  return Math.round(Math.max(1, Math.min(1000, 1 + norm * 999)));
 }
 
 // Quadratic-curve mapping for the cash-interest-rate slider: slider position
