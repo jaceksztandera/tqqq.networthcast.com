@@ -50,7 +50,10 @@
 
 <div class="layout">
   <div class="panel">
-    <h2>Investment</h2>
+    <div class="panel-head">
+      <h2>Investment</h2>
+      <button id="analytics-toggle" onclick="toggleAnalytics()">analytics grid</button>
+    </div>
 
     <div class="control-group">
       <label>Initial Investment</label>
@@ -90,6 +93,11 @@
     <!-- Saved strategies (saved-configs.js) — every type, incl. custom. Hidden
          until the user has at least one. Each pill = an independent line. -->
     <div id="saved-configs" hidden></div>
+
+    <!-- Strategy Library: read-only catalog of the 25 best-known LETF strategies. -->
+    <button id="strategy-library-btn" type="button" class="strategy-library-btn" onclick="toggleStrategyLibrary()">
+      📚 Strategy Library — 25 known LETF strategies
+    </button>
   </div>
 
   <div class="right-col">
@@ -118,10 +126,6 @@
         </div>
         <input type="hidden" id="slider-entry" value="0">
         <input type="hidden" id="slider-exit" value="108">
-      </div>
-
-      <div style="margin-top:14px">
-        <button id="analytics-toggle" onclick="toggleAnalytics()">analytics grid</button>
       </div>
     </div>
 
@@ -180,6 +184,18 @@
     </div>
   </div>
   <div id="heatmap-tooltip" class="heatmap-tooltip" hidden></div>
+</div>
+
+<!-- Strategy Library modal (read-only catalog; strategy-library.js) -->
+<div id="strategy-library-modal" class="modal" hidden>
+  <div class="modal-backdrop" onclick="toggleStrategyLibrary()"></div>
+  <div class="modal-content strategy-library-modal-content">
+    <div class="strategy-library-header">
+      <h3>📚 Strategy Library</h3>
+      <button type="button" class="modal-close" onclick="toggleStrategyLibrary()" aria-label="Close">×</button>
+    </div>
+    <div class="strategy-library-body" id="strategy-library-body"></div>
+  </div>
 </div>
 
 <aside id="strategy-panel" class="strategy-panel" aria-hidden="true">
@@ -796,6 +812,8 @@
 <script src="js/analytics.js?v=41"></script>
 <script src="js/preview-dropdown.js?v=41"></script>
 <script src="js/saved-configs.js?v=41"></script>
+<script src="js/strategy-library-code.js?v=41"></script>
+<script src="js/strategy-library.js?v=41"></script>
 <script src="js/init.js?v=41"></script>
 
 </body>
