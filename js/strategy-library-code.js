@@ -510,7 +510,7 @@ CODE[22] = `{
 
 // #23 TFTLT: QQQ 200SMA → TQQQ, RSI(10) overheat exit + cool-gate re-entry.
 CODE[23] = `{
-  name: "TFTLT: 200SMA + RSI(10) overheat/cool",
+  name: "200-day SMA + RSI exit & re-entry",
   params: [{ id: "oh", label: "Overheat exit RSI(10) ≥", options: [60, 70, 80, 100], default: 80 },
            { id: "cool", label: "Cool-gate re-entry RSI(10) <", options: [40, 50, 60, 100], default: 60 }],
   run(data, p) {

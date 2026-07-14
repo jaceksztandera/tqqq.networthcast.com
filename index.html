@@ -240,14 +240,12 @@
         <option value="tqqq">TQQQ</option>
         <option value="sso">SSO</option>
         <option value="spxl">SPXL</option>
-        <option value="qqq5">QQQ5</option>
       </select>
       <span class="info-icon" tabindex="0" data-tip="Canonical 9sig parks the safety side (the cash %) as actual cash earning the rate below. Pick another ticker to hold that side as shares of QQQ/SPY/etc. instead — contributions and rebalance proceeds buy into it, the cash rate stops applying, and rebalance BUYS/SELLS convert between the underlying and the park asset at each rebalance. Picking a leveraged ticker leverages both legs.">ⓘ</span>
       and use remaining <span id="9sig-stock-pct">60%</span> to buy
       <select class="inline-select" id="select-9sig-underlying">
         <option value="tqqq" selected>TQQQ</option>
         <option value="qld">QLD</option>
-        <option value="qqq5">QQQ5</option>
         <option value="sso">SSO</option>
         <option value="spxl">SPXL</option>
       </select>.
@@ -460,7 +458,7 @@
         <option value="149">149%</option>
         <option value="150">150%</option>
       </select>.
-      <span class="info-icon" tabindex="0" data-tip="A 9% signal-line growth per quarter is the canonical setting for 3× ETFs (TQQQ, SPXL) — drop it for 2× (QLD, SSO), bump it up for 5× (QQQ5).">ⓘ</span>
+      <span class="info-icon" tabindex="0" data-tip="A 9% signal-line growth per quarter is the canonical setting for 3× ETFs (TQQQ, SPXL) — drop it for 2× (QLD, SSO).">ⓘ</span>
     </div>
     <div class="adaptive-line">
       In a crash, hold instead of selling once the stock has fallen
@@ -614,7 +612,6 @@
         <option value="qld">QLD</option>
         <option value="qqq">QQQ</option>
         <option value="spy">SPY</option>
-        <option value="qqq5">QQQ5</option>
         <option value="sso">SSO</option>
         <option value="spxl">SPXL</option>
       </select>
@@ -632,7 +629,6 @@
       <select class="inline-select" id="select-sma-underlying">
         <option value="tqqq" selected>TQQQ</option>
         <option value="qld">QLD</option>
-        <option value="qqq5">QQQ5</option>
         <option value="sso">SSO</option>
         <option value="spxl">SPXL</option>
       </select>
@@ -671,7 +667,49 @@
       below it to sell.
     </div>
     <div class="adaptive-line">
-      Also sell when RSI(10)<span class="info-icon" tabindex="0" data-tip="RSI is a 0–100 gauge of how stretched recent price moves are. Above 70 the market is running hot and tends to pull back; under 30 it's beat-up and tends to bounce. The (10) just means it's measured over the last 10 trading days.">ⓘ</span> is above
+      Only flip after the signal holds for
+      <select class="inline-select" id="select-sma-confirm">
+        <option value="0" selected>0 (instant)</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+      </select>
+      days in a row.
+      <span class="info-icon" tabindex="0" data-tip="Stops jumpy in-and-out trading.&#10;The price must stay on the new side of the line this many days before you trade.&#10;&#10;Example: set to 3 —&#10;if QQQ dips below the line for a day then bounces, you don't sell. It must close below 3 days straight.&#10;&#10;0 = trade the first day it crosses.">ⓘ</span>
+    </div>
+    <div class="adaptive-line">
+      Also sell when RSI(<select class="inline-select sma-rsi-win" id="select-sma-rsi-oh-window">
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10" selected>10</option>
+        <option value="11">11</option>
+        <option value="12">12</option>
+        <option value="13">13</option>
+        <option value="14">14</option>
+        <option value="15">15</option>
+        <option value="16">16</option>
+        <option value="17">17</option>
+        <option value="18">18</option>
+        <option value="19">19</option>
+        <option value="20">20</option>
+        <option value="21">21</option>
+        <option value="22">22</option>
+        <option value="23">23</option>
+        <option value="24">24</option>
+        <option value="25">25</option>
+        <option value="26">26</option>
+        <option value="27">27</option>
+        <option value="28">28</option>
+        <option value="29">29</option>
+        <option value="30">30</option>
+      </select>)<span class="info-icon" tabindex="0" data-tip="RSI is a 0–100 speed gauge:&#10;• above ~70 = ran up fast, often pulls back&#10;• below ~30 = beaten down, often bounces&#10;&#10;The box = how many days it looks back (2–30).&#10;2 = twitchy, reacts to every wiggle. 30 = smooth and slow. 10 is a common middle.&#10;&#10;This is the sell-side RSI only — the buy rule below has its own.">ⓘ</span> is above
       <select class="inline-select" id="select-sma-rsi-oh">
         <option value="0" selected>off</option>
         <option value="60">60</option>
@@ -681,7 +719,37 @@
       </select>
     </div>
     <div class="adaptive-line">
-      Only buy after RSI(10) drops below
+      Only buy after RSI(<select class="inline-select sma-rsi-win" id="select-sma-rsi-cool-window">
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10" selected>10</option>
+        <option value="11">11</option>
+        <option value="12">12</option>
+        <option value="13">13</option>
+        <option value="14">14</option>
+        <option value="15">15</option>
+        <option value="16">16</option>
+        <option value="17">17</option>
+        <option value="18">18</option>
+        <option value="19">19</option>
+        <option value="20">20</option>
+        <option value="21">21</option>
+        <option value="22">22</option>
+        <option value="23">23</option>
+        <option value="24">24</option>
+        <option value="25">25</option>
+        <option value="26">26</option>
+        <option value="27">27</option>
+        <option value="28">28</option>
+        <option value="29">29</option>
+        <option value="30">30</option>
+      </select>) drops below
       <select class="inline-select" id="select-sma-rsi-cool">
         <option value="0" selected>off</option>
         <option value="40">40</option>
@@ -689,7 +757,7 @@
         <option value="60">60</option>
         <option value="70">70</option>
       </select>
-      <span class="info-icon" tabindex="0" data-tip="When the SMA says it's time to buy, hold off until the price has cooled down a bit — wait for RSI to drop under this level first. Leave it off if you'd rather buy the moment the SMA flips.">ⓘ</span>
+      <span class="info-icon" tabindex="0" data-tip="After a buy signal, wait for the price to cool off instead of chasing.&#10;&#10;Example: set to 40 —&#10;you hold until RSI dips under 40 (a pullback), then buy.&#10;&#10;The RSI box = look-back days (2–30).&#10;Off = buy the instant the signal flips.">ⓘ</span>
     </div>
     <div class="adaptive-line">
       While out of the market, parked cash earns
@@ -728,7 +796,7 @@
         <option value="20">20.0%</option>
       </select>
       a year.
-      <span class="info-icon" tabindex="0" data-tip="Annual interest the SMA strategy's cash earns while it sits out of the market. Independent of the 9sig and Invested Compounded rates.">ⓘ</span>
+      <span class="info-icon" tabindex="0" data-tip="While you're out of the market and sitting in cash, this is the yearly interest that cash earns — like a savings account or T-bills.&#10;&#10;Example: 4% = idle cash grows about 4% a year while you wait to buy back in.">ⓘ</span>
     </div>
 
     <div class="strategy-panel-section-label" style="margin-top:18px">Where to park during a SELL</div>
@@ -740,12 +808,12 @@
         <option value="spy">SPY</option>
       </select>
       instead.
-      <span class="info-icon" tabindex="0" data-tip="Canonical SMA parks in cash on SELL. Picking QQQ or SPY keeps you in unleveraged equity instead — historically the unleveraged versions outperformed bonds/cash on the SELL side. Cash still earns the cash rate above; stock fallbacks track the chosen asset's price.">ⓘ</span>
+      <span class="info-icon" tabindex="0" data-tip="What you hold after a sell.&#10;&#10;• cash — just waits (earns the rate above)&#10;• QQQ / SPY — keeps your money in the plain, non-leveraged market: much safer than the 3× fund, but still grows if the market drifts up&#10;&#10;Example: sell TQQQ → sit in QQQ → jump back to TQQQ when the buy signal returns.">ⓘ</span>
     </div>
 
     <div class="strategy-panel-section-label" style="margin-top:18px">Stage your buying / selling</div>
     <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">
-      Default: BUY and SELL signals fire trades instantly. Setting either ladder spreads the move over N months — sell to cash is always instant; only the buy side ramps.
+      By default a buy or sell happens all at once. You can spread a buy over a few months so you're not betting everything on one day's price. Selling is always instant — only buying can be eased in.
     </div>
     <div class="adaptive-line">
       On a BUY signal, ramp into the underlying over
@@ -764,12 +832,12 @@
         <option value="6">6 months</option>
         <option value="12">12 months</option>
       </select>.
-      <span class="info-icon" tabindex="0" data-tip="Only matters when the out-asset isn't cash. The strategy sells the underlying immediately, then DCAs the cash into the out-asset over this many months. If the BUY signal fires mid-ramp, the partial out-asset position is liquidated back to fund the underlying buy.">ⓘ</span>
+      <span class="info-icon" tabindex="0" data-tip="Only matters if you park in QQQ/SPY instead of cash.&#10;&#10;On a sell it dumps the 3× fund right away, then eases into QQQ/SPY over this many months.&#10;&#10;Example: 6 = move a sixth of the money each month for six months.&#10;If the buy signal returns mid-way, it stops and switches back to the 3× fund.">ⓘ</span>
     </div>
 
     <div class="strategy-panel-section-label" style="margin-top:18px">Bodyguard (deleverage + GTFO)</div>
     <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">
-      Override the primary signal when the unleveraged underlying gets too far above its own SMA — defensive dot-com-style insurance. Bodyguard transitions are instant (override the DCA ladders).
+      A safety brake for bubbles. When the market has run far above its average line (think 1999 or late 2021), holding a 3× fund is extra risky. This steps you down early no matter what the main signal says. The two rules below use how far QQQ is above its own 200-day average.
     </div>
     <div class="adaptive-line">
       Deleverage to unleveraged when QQQ is

@@ -14,10 +14,10 @@ const LEGEND_ORDER = [
   0,  // 9sig
   8,  // SMA
   2,  // Buy & Hold — dataset 2's label + data swap based on
-      // #select-bh-underlying (TQQQ / QQQ / SPY / QQQ5).
+      // #select-bh-underlying (TQQQ / QQQ / SPY).
   7,  // Invested Compounded
 ];
-// Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QQQ5), 10 (B&H QLD), 11 (B&H SSO),
+// Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QLD), 10 (B&H SSO),
 // and 12 (B&H SPXL) stay in the chart structure so dataset indices don't shift,
 // but their chips are hidden — the consolidated dataset 2 chip serves as the
 // single B&H entry, with the underlying picked via the sidebar selector.
@@ -172,7 +172,7 @@ function buildNineSigRulesHtml() {
 // something when the signal flips. Most quarters would just be noise.
 function buildSmaLogTableHtml(smaLog) {
   if (!smaLog || smaLog.length === 0) return '';
-  // The leveraged ETF the SMA strategy holds when "in" (TQQQ / QQQ5).
+  // The leveraged ETF the SMA strategy holds when "in" (TQQQ).
   const ulName = ((document.getElementById('select-sma-underlying') || {}).value || 'tqqq').toUpperCase();
   const rows = smaLog.map(l => {
     const ac = l.action === 'EXIT'  ? 'action-sell'
@@ -311,7 +311,7 @@ function buildBuyHoldLogTableHtml(title, log, series, ulName) {
 
 function buildLogTableHtml(d) {
   if (!d || !d.log || !d.log.length) return '';
-  // Column names follow whichever underlying the 9sig run trades (TQQQ / QQQ5).
+  // Column names follow whichever underlying the 9sig run trades (TQQQ).
   const ulName = ((document.getElementById('select-9sig-underlying') || {}).value || 'tqqq').toUpperCase();
   const nm = newMoneyPerPeriod(d.log);
   const fmtPrice = fmtLogPrice;
@@ -511,7 +511,6 @@ function renderStrategyPanelBody(idx) {
     const bhSeries = bhKey === 'qqq'  ? _logData.qqqPoints
                    : bhKey === 'spy'  ? _logData.spyPoints
                    : bhKey === 'qld'  ? _logData.qldPoints
-                   : bhKey === 'qqq5' ? _logData.qqq5Points
                    : bhKey === 'sso'  ? _logData.ssoPoints
                    : bhKey === 'spxl' ? _logData.spxlPoints
                    :                    _logData.bhPoints;
@@ -880,10 +879,10 @@ function render() {
   // Per-strategy underlying + 9sig signal-growth from their side-panel selects.
   // SMA has its own selector because its only relationship to the leveraged
   // ETF is "hold it or not".
-  // Column index in quarterlyData: 1=TQQQ, 4=QLD, 5=QQQ5, 6=SSO, 7=SPXL.
+  // Column index in quarterlyData: 1=TQQQ, 4=QLD, 5=SSO, 6=SPXL.
   const ulSel = (id) => {
     const v = (document.getElementById(id) || {}).value;
-    return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1;
+    return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1;
   };
   const sigUlCol = ulSel('select-9sig-underlying');
   const smaUlCol = ulSel('select-sma-underlying');
@@ -928,8 +927,8 @@ function render() {
     // rate; the 9sig parked cash uses its own rate (passed as the 3rd arg).
     baselineRate: rate,
   };
-  const { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, totalContributed,
-          samplePoints, bhSample, qqqSample, spySample, qldSample, qqq5Sample, ssoSample, spxlSample } = simulate(initial, monthly, nineSigCashRate, simEntryIdx, exitIdx, annualRaise, sigOpts);
+  const { log, bhPoints, qqqPoints, spyPoints, qldPoints, ssoPoints, spxlPoints, totalContributed,
+          samplePoints, bhSample, qqqSample, spySample, qldSample, ssoSample, spxlSample } = simulate(initial, monthly, nineSigCashRate, simEntryIdx, exitIdx, annualRaise, sigOpts);
   // For each line, the points fed to the chart: the quarter-end snapshots when
   // the run is coarser than the axis (yearly), else the rebalance-grain points.
   const pick = (samp, pts) => (samp && samp.length) ? samp : pts;
@@ -938,7 +937,6 @@ function render() {
   const qqqPtsD = pick(qqqSample, qqqPoints);
   const spyPtsD = pick(spySample, spyPoints);
   const qldPtsD = pick(qldSample, qldPoints);
-  const qqq5PtsD = pick(qqq5Sample, qqq5Points);
   const ssoPtsD = pick(ssoSample, ssoPoints);
   const spxlPtsD = pick(spxlSample, spxlPoints);
 
@@ -973,6 +971,10 @@ function render() {
     dcaToOutMonths: +((document.getElementById('select-sma-dca-to-out')  || {}).value) || 0,
     bgDelevPct:     +((document.getElementById('select-sma-bg-delev')    || {}).value) || 0,
     bgGtfoPct:      +((document.getElementById('select-sma-bg-gtfo')     || {}).value) || 0,
+    rsiOhWindow:    +((document.getElementById('select-sma-rsi-oh-window')   || {}).value) || 10,
+    rsiCoolWindow:  +((document.getElementById('select-sma-rsi-cool-window') || {}).value) || 10,
+    rebalanceCheck: 'daily',
+    confirmSteps:   +((document.getElementById('select-sma-confirm')  || {}).value) || 0,
   };
   const { smaPoints, smaLog } = simulateSMA(initial, monthly, smaCashRate, simEntryIdx, exitIdx, annualRaise, smaOpts);
 
@@ -1046,7 +1048,6 @@ function render() {
   const finalQQQ = qqqPoints[qqqPoints.length - 1].value;
   const finalSPY = spyPoints[spyPoints.length - 1].value;
   const finalQLD  = qldPoints  && qldPoints.length  ? qldPoints[qldPoints.length - 1].value   : 0;
-  const finalQQQ5 = qqq5Points && qqq5Points.length ? qqq5Points[qqq5Points.length - 1].value : 0;
   const finalSSO  = ssoPoints  && ssoPoints.length  ? ssoPoints[ssoPoints.length - 1].value   : 0;
   const finalSPXL = spxlPoints && spxlPoints.length ? spxlPoints[spxlPoints.length - 1].value : 0;
   const finalSMA  = smaPoints  && smaPoints.length  ? smaPoints[smaPoints.length - 1].value   : 0;
@@ -1066,7 +1067,6 @@ function render() {
   const retQQQ = _mw(finalQQQ);
   const retSPY = _mw(finalSPY);
   const retQLD  = _mw(finalQLD);
-  const retQQQ5 = _mw(finalQQQ5);
   const retSSO  = _mw(finalSSO);
   const retSPXL = _mw(finalSPXL);
   const retSMA  = _mw(finalSMA);
@@ -1084,7 +1084,6 @@ function render() {
     bhKey === 'qqq'  ? { series: qqqPoints,         ret: retQQQ }  :
     bhKey === 'spy'  ? { series: spyPoints,         ret: retSPY }  :
     bhKey === 'qld'  ? { series: qldPoints || [],   ret: retQLD }  :
-    bhKey === 'qqq5' ? { series: qqq5Points || [],  ret: retQQQ5 } :
     bhKey === 'sso'  ? { series: ssoPoints || [],   ret: retSSO }  :
     bhKey === 'spxl' ? { series: spxlPoints || [],  ret: retSPXL } :
                        { series: bhPoints,          ret: retBH }   ;
@@ -1118,7 +1117,6 @@ function render() {
   const qqqD = onLabels(qqqPtsD, q => q.value);
   const spyD = onLabels(spyPtsD, s => s.value);
   const qldD = onLabels(qldPtsD, p => p.value);
-  const qqq5D = onLabels(qqq5PtsD, p => p.value);
   const ssoD = onLabels(ssoPtsD, p => p.value);
   const spxlD = onLabels(spxlPtsD, p => p.value);
   // smaPoints are snapshotted at quarter-ends, but the chart x-axis follows
@@ -1139,7 +1137,7 @@ function render() {
   // Data fed into the consolidated B&H slot (dataset 2) — display points for the
   // selected underlying (quarter snapshots for a yearly run, else rebalance grain).
   const bhActiveD = onLabels(
-    bhKey === 'qqq' ? qqqPtsD : bhKey === 'spy' ? spyPtsD : bhKey === 'qld' ? qldPtsD : bhKey === 'qqq5' ? qqq5PtsD : bhKey === 'sso' ? ssoPtsD : bhKey === 'spxl' ? spxlPtsD : bhPtsD,
+    bhKey === 'qqq' ? qqqPtsD : bhKey === 'spy' ? spyPtsD : bhKey === 'qld' ? qldPtsD : bhKey === 'sso' ? ssoPtsD : bhKey === 'spxl' ? spxlPtsD : bhPtsD,
     p => p.value);
 
   // Per-dataset stats shown inside the strategy side panel (CAGR / starting
@@ -1157,9 +1155,9 @@ function render() {
   // them. Step series (Target/Cash) and the deterministic Invested baseline
   // keep their rebalance-grain drawdown — they don't move between rebalances.
   const dailyRows = (typeof daily !== 'undefined' && daily) ? daily : null;
-  const UL_KEY = { 1: 'tqqq', 2: 'qqq', 3: 'spy', 4: 'qld', 5: 'qqq5', 6: 'sso', 7: 'spxl' };
+  const UL_KEY = { 1: 'tqqq', 2: 'qqq', 3: 'spy', 4: 'qld', 5: 'sso', 6: 'spxl' };
   const sigKey = UL_KEY[sigUlCol] || 'tqqq';
-  const bhKeyName = bhKey === 'qqq' ? 'qqq' : bhKey === 'spy' ? 'spy' : bhKey === 'qld' ? 'qld' : bhKey === 'qqq5' ? 'qqq5' : bhKey === 'sso' ? 'sso' : bhKey === 'spxl' ? 'spxl' : 'tqqq';
+  const bhKeyName = bhKey === 'qqq' ? 'qqq' : bhKey === 'spy' ? 'spy' : bhKey === 'qld' ? 'qld' : bhKey === 'sso' ? 'sso' : bhKey === 'spxl' ? 'spxl' : 'tqqq';
   const dailyDDByIdx = {};
   if (dailyRows) {
     const sigCtl = log.map(l => ({ date: l.date, shares: l.price > 0 ? l.tqqqVal / l.price : 0, cash: l.cash }));
@@ -1213,7 +1211,7 @@ function render() {
     chart.data.datasets[0].data = totalD;
     chart.data.datasets[1].data = tqqqValD;
     chart.data.datasets[2].data = bhActiveD;
-    // Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QQQ5), 10 (B&H QLD) are kept
+    // Datasets 3 (B&H QQQ), 4 (B&H SPY), 9 (B&H QLD), 10 (B&H SSO) are kept
     // zeroed and hidden — dataset 2 above serves as the consolidated B&H slot now.
     chart.data.datasets[3].data = []; chart.data.datasets[3].hidden = true;
     chart.data.datasets[4].data = []; chart.data.datasets[4].hidden = true;
@@ -1225,9 +1223,8 @@ function render() {
     chart.data.datasets[9].data = []; chart.data.datasets[9].hidden = true;
     chart.data.datasets[10].data = []; chart.data.datasets[10].hidden = true;
     chart.data.datasets[11].data = []; chart.data.datasets[11].hidden = true;
-    chart.data.datasets[12].data = []; chart.data.datasets[12].hidden = true;
-    while (chart.data.datasets.length < 13 + envelopeShiftCount) {
-      const offset = chart.data.datasets.length - 13;
+    while (chart.data.datasets.length < 12 + envelopeShiftCount) {
+      const offset = chart.data.datasets.length - 12;
       chart.data.datasets.push({
         label: '_shift_' + (offset + 1),
         data: [],
@@ -1243,7 +1240,7 @@ function render() {
       });
     }
     for (let i = 0; i < envelopeShiftCount; i++) {
-      const ds9 = chart.data.datasets[13 + i];
+      const ds9 = chart.data.datasets[12 + i];
       ds9.data = showBaseEnvelope ? (shiftResults[i] || []) : [];
       ds9.borderColor = envColor;
       ds9.hidden = !showBaseEnvelope;
@@ -1273,21 +1270,19 @@ function render() {
   //   6  9sig Cash     amber      #fbbf24
   //   7  Invested Comp gray
   //   8  SMA           chartreuse #a3e635
-  //   9  B&H QQQ5      indigo     #6366f1
   //  10  B&H QLD       cyan       #06b6d4
   //  11  B&H SSO       purple     #c084fc
   //  12  B&H SPXL      rose       #f43f5e
-  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#6366f1', '#06b6d4', '#c084fc', '#f43f5e'];
-  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QQQ5', 'B&H QLD', 'B&H SSO', 'B&H SPXL'];
+  const lineColors = ['#22d3ee', '#38bdf8', '#f87171', '#4ade80', '#f472b6', '#fb923c', '#fbbf24', 'rgba(226,232,240,0.4)', '#a3e635', '#06b6d4', '#c084fc', '#f43f5e'];
+  const lineNames  = [LBL_9SIG, '9sig Holding', LBL_BH, 'B&H QQQ', 'B&H SPY', '9sig Target', '9sig Cash', LBL_INV, LBL_SMA, 'B&H QLD', 'B&H SSO', 'B&H SPXL'];
   // Match the borderDash on the corresponding chart dataset; null = solid.
   //   2 B&H TQQQ   [6,3]       medium dash
   //   3 B&H QQQ    [8,4]       long dash
   //   4 B&H SPY    [2,5]       sparse dots
-  //   9 B&H QQQ5   [5,2,2,2]   dash-dot
   //  10 B&H QLD    [5,2,2,2]   dash-dot
   //  11 B&H SSO    [5,2,2,2]   dash-dot
   //  12 B&H SPXL   [5,2,2,2]   dash-dot
-  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2], [5,2,2,2]];
+  const lineDashes = [null, [2,2], [6,3], [8,4], [2,5], [4,4], null, [3,3], null, [5,2,2,2], [5,2,2,2], [5,2,2,2]];
 
   // Touch / coarse-pointer detection — once at chart creation time. On those
   // devices Chart.js's tap-to-show tooltip is followed by an immediate
@@ -1594,19 +1589,6 @@ function render() {
           _smaStates: smaStates
         },
         {
-          label: 'B&H QQQ5',
-          data: [],
-          borderColor: '#6366f1',
-          backgroundColor: 'transparent',
-          fill: false,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHitRadius: 10,
-          borderWidth: 2,
-          borderDash: [5, 2, 2, 2],
-          hidden: true,
-        },
-        {
           label: 'B&H QLD',
           data: [],
           borderColor: '#06b6d4',
@@ -1728,7 +1710,7 @@ function render() {
   // Stash latest data for the side-panel log tables. Normally this is the
   // canonical base simulation; but when a saved strategy is open for editing the
   // panel describes THAT strategy, so swap in its (separately computed) sim.
-  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, qqq5Points, ssoPoints, spxlPoints, smaLog };
+  _logData = { log, bhPoints, qqqPoints, spyPoints, qldPoints, ssoPoints, spxlPoints, smaLog };
   if (window._editingConfigId && window._editingConfigSim) {
     const cs = window._editingConfigSim;
     _logData = {
@@ -1737,7 +1719,6 @@ function render() {
       qqqPoints:  cs.qqqPoints  || qqqPoints,
       spyPoints:  cs.spyPoints  || spyPoints,
       qldPoints:  cs.qldPoints  || qldPoints,
-      qqq5Points: cs.qqq5Points || qqq5Points,
       ssoPoints:  cs.ssoPoints  || ssoPoints,
       spxlPoints: cs.spxlPoints || spxlPoints,
       smaLog:     cs.smaLog     || smaLog,

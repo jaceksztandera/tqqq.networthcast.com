@@ -302,6 +302,10 @@
     margin: 0 2px;
     transition: border-color 0.15s;
   }
+  /* The two RSI-period pickers sit inline in a sentence; 3px smaller than the
+     other inline dropdowns keeps the line from feeling crowded. */
+  select.sma-rsi-win,
+  .pdrop:has(select.sma-rsi-win) .pdrop-trigger { font-size: 9px; }
   .inline-select:hover { border-color: var(--accent); }
   .inline-select:focus { outline: none; border-color: var(--accent); }
 
@@ -2728,9 +2732,13 @@
     line-height: 1.4;
     text-transform: none;
     letter-spacing: 0;
-    white-space: normal;
+    /* pre-line honours the explicit line breaks (&#10;) we put in data-tip so
+       tooltips read as short lines instead of one dense block, while still
+       wrapping any long line. */
+    white-space: pre-line;
     width: max-content;
-    max-width: 240px;
+    max-width: 260px;
+    text-align: left;
     z-index: 10000;
     pointer-events: none;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);

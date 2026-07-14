@@ -12,13 +12,13 @@
 // `state` per quarter is 'in' (holding TQQQ) or 'out' (cash) at the end of
 // that quarter — the SMA strategy panel renders transition dots off this.
 // Column index into monthlyData rows for each tradeable asset name.
-// monthlyData layout: [date, tqqq, qqq, spy, qld, qqq5, sso, spxl]
-const SMA_ASSET_COL = { tqqq: 1, qqq: 2, spy: 3, qld: 4, qqq5: 5, sso: 6, spxl: 7 };
+// monthlyData layout: [date, tqqq, qqq, spy, qld, sso, spxl]
+const SMA_ASSET_COL = { tqqq: 1, qqq: 2, spy: 3, qld: 4, sso: 5, spxl: 6 };
 // Unleveraged equivalent — used for the bodyguard SMA-distance check.
 // (The bodyguard tracks the unleveraged underlying because the leveraged
 // version's "% above its own SMA" is structurally larger and useless as a
 // gauge of how stretched the underlying market is.)
-const SMA_UNLEVERAGED_OF = { tqqq: 'qqq', qld: 'qqq', qqq5: 'qqq', sso: 'spy', spxl: 'spy', qqq: 'qqq', spy: 'spy' };
+const SMA_UNLEVERAGED_OF = { tqqq: 'qqq', qld: 'qqq', sso: 'spy', spxl: 'spy', qqq: 'qqq', spy: 'spy' };
 
 function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
   opts = opts || {};
@@ -54,37 +54,60 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   // transitions are instant (override DCA) — the whole point is emergency exit.
   const bgDelev = +opts.bgDelevPct || 0;
   const bgGtfo  = +opts.bgGtfoPct  || 0;
+  // RSI periods (Wilder). The overheat-exit and cool-gate-entry rules each get
+  // their own period; legacy opts.rsiWindow is the fallback for both.
+  const rsiOhWindow   = +opts.rsiOhWindow   || +opts.rsiWindow || 10;
+  const rsiCoolWindow = +opts.rsiCoolWindow || +opts.rsiWindow || 10;
+  // How often the signal is checked: 'daily' (each trading day) or 'monthly'
+  // (last trading day of the month — Faber cadence). Daily reacts far faster on
+  // a 3× fund. Contributions and cash interest stay monthly either way.
+  const checkDaily = (opts.rebalanceCheck || 'monthly') === 'daily';
+  // Confirmation filter: require the flipped signal to persist this many
+  // consecutive checks before committing the trade. 0/1 = off (flip on first
+  // cross). A whipsaw filter distinct from the price buffer.
+  const confirmSteps = Math.max(0, +opts.confirmSteps || 0);
+  const emitDD = !!opts.emitDD; // build dense multi-asset control points for max-drawdown
   const monthlyRate = annualRate / 12;
   annualRaise = annualRaise || 0;
 
   const empty = { smaPoints: [], totalContributed: initial };
   if (!smaAtMonthlyByKey || !monthlyData || !quarterlyData) return empty;
-  const smaKey    = smaAsset + '_' + smaWindow;
-  const smaAtMon  = smaAtMonthlyByKey[smaKey];
-  if (!smaAtMon)  return empty;
-  const rsiAtMon  = (typeof rsiAtMonthlyByAsset !== 'undefined' && rsiAtMonthlyByAsset) ? rsiAtMonthlyByAsset[smaAsset] : null;
+  const smaKey = smaAsset + '_' + smaWindow;
+  // Pick the step grain. Daily needs the precomputed daily arrays; if they're
+  // absent (e.g. the unit-test harness) fall back to monthly so callers stay safe.
+  const haveDaily = checkDaily && typeof dailyRows !== 'undefined' && dailyRows &&
+                    typeof smaAtDailyByKey !== 'undefined' && smaAtDailyByKey && smaAtDailyByKey[smaKey];
+  const stepRows = haveDaily ? dailyRows : monthlyData;
+  const smaAtStep = haveDaily ? smaAtDailyByKey[smaKey] : smaAtMonthlyByKey[smaKey];
+  if (!smaAtStep) return empty;
+  const rsiByKey  = haveDaily
+    ? (typeof rsiAtDailyByKey   !== 'undefined' ? rsiAtDailyByKey   : null)
+    : (typeof rsiAtMonthlyByKey !== 'undefined' ? rsiAtMonthlyByKey : null);
+  const rsiOhAtStep   = rsiByKey ? rsiByKey[smaAsset + '_' + rsiOhWindow]   : null;
+  const rsiCoolAtStep = rsiByKey ? rsiByKey[smaAsset + '_' + rsiCoolWindow] : null;
 
   const startDate = quarterlyData[entryIdx][0];
   const endDate   = quarterlyData[exitIdx][0];
-  // monthlyData layout: [date, tqqq, qqq, spy, qld, qqq5, sso, spxl] — sigAsset
-  // is QQQ (col 2) or SPY (col 3); the leveraged underlying is selected via ulCol.
+  // row layout: [date, tqqq, qqq, spy, qld, sso, spxl] — sigAsset is QQQ
+  // (col 2) or SPY (col 3); the leveraged underlying is selected via ulCol.
   const assetCol  = smaAsset === 'qqq' ? 2 : 3;
 
   // Underlying asset name (for state-machine target comparisons). Resolve from
-  // ulCol so non-default underlyings (QQQ5) get the right unleveraged sibling.
+  // ulCol so non-default underlyings get the right unleveraged sibling.
   const ulName = Object.keys(SMA_ASSET_COL).find(k => SMA_ASSET_COL[k] === ulCol) || 'tqqq';
   const unlevName = SMA_UNLEVERAGED_OF[ulName] || 'qqq';
   const unlevCol  = SMA_ASSET_COL[unlevName];
   // Bodyguard SMA — same window as primary, but always on the unleveraged
-  // underlying ("% above QQQ-200" is the canonical dot-com gauge, not the
-  // leveraged version of it).
-  const bgSmaAtMon = (bgDelev > 0 || bgGtfo > 0) ? smaAtMonthlyByKey[unlevName + '_' + smaWindow] : null;
+  // underlying ("% above QQQ-200" is the canonical dot-com gauge).
+  const bgSmaAtStep = (bgDelev > 0 || bgGtfo > 0)
+    ? (haveDaily ? smaAtDailyByKey[unlevName + '_' + smaWindow] : smaAtMonthlyByKey[unlevName + '_' + smaWindow])
+    : null;
 
-  // First monthly index at-or-after the entry quarter; last at-or-before exit.
+  // First step index at-or-after the entry quarter; last at-or-before exit.
   let mStart = 0;
-  while (mStart < monthlyData.length && monthlyData[mStart][0] < startDate) mStart++;
-  let mEnd = monthlyData.length - 1;
-  while (mEnd >= 0 && monthlyData[mEnd][0] > endDate) mEnd--;
+  while (mStart < stepRows.length && stepRows[mStart][0] < startDate) mStart++;
+  let mEnd = stepRows.length - 1;
+  while (mEnd >= 0 && stepRows[mEnd][0] > endDate) mEnd--;
   if (mStart > mEnd) return empty;
 
   // Decide in/out for this period. Layered rules:
@@ -93,16 +116,18 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   //   3. RSI cool gate (rsiCool) — block re-entry until pullback completes
   // The two RSI rules are independent: overheat fires when RSI is HIGH,
   // cool-gate fires when RSI is still HIGH (haven't reached the cool zone).
-  function evalSignal(state, asset, sma, rsi) {
+  // rsiOhVal uses the overheat period; rsiCoolVal uses the (independent)
+  // cool-gate period.
+  function evalSignal(state, asset, sma, rsiOhVal, rsiCoolVal) {
     if (sma == null || asset <= 0) return state;
-    const rsiHot = rsiOH > 0 && rsi != null && rsi >= rsiOH;
+    const rsiHot = rsiOH > 0 && rsiOhVal != null && rsiOhVal >= rsiOH;
     if (state === 'in') {
       if (rsiHot) return 'out';
       return asset < sma * (1 - exitBuf) ? 'out' : 'in';
     }
     // state === 'out' — entry path
     if (rsiHot) return 'out';                          // don't re-enter while overheated
-    if (rsiCool > 0 && rsi != null && rsi >= rsiCool) return 'out'; // wait for pullback
+    if (rsiCool > 0 && rsiCoolVal != null && rsiCoolVal >= rsiCool) return 'out'; // wait for pullback
     return asset > sma * (1 + entryBuf) ? 'in' : 'out';
   }
   // Bodyguard: returns 'gtfo' / 'delev' / 'normal' based on the unleveraged
@@ -123,24 +148,27 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (bg === 'delev') return unlevName;
     return ulName;
   }
-  // Initial state: SMA + buffer + RSI on entry month.
-  const sm0 = monthlyData[mStart];
+  // Initial state: SMA + buffer + RSI on the entry step.
+  const sm0 = stepRows[mStart];
   const a0  = sm0[assetCol] || 0;
-  const sma0 = smaAtMon[mStart];
-  const rsi0 = rsiAtMon ? rsiAtMon[mStart] : null;
+  const sma0 = smaAtStep[mStart];
+  const rsi0 = rsiOhAtStep ? rsiOhAtStep[mStart] : null;
   // Seed state ignoring exit-buffer (no prior state to test against — fall
   // back to plain "above SMA?" for the very first read).
   let state  = sma0 == null ? 'in' : (a0 > sma0 ? 'in' : 'out');
   if (state === 'in' && rsiOH > 0 && rsi0 != null && rsi0 >= rsiOH) state = 'out';
-  // Initial bodyguard read (same month).
-  const bgSma0 = bgSmaAtMon ? bgSmaAtMon[mStart] : null;
+  // Confirmation-filter state: the pending flipped signal and how many
+  // consecutive checks it has persisted.
+  let pendingState = state, pendingCount = 0;
+  // Initial bodyguard read (same step).
+  const bgSma0 = bgSmaAtStep ? bgSmaAtStep[mStart] : null;
   const unlev0 = sm0[unlevCol] || 0;
   let bgState = evalBodyguard(unlev0, bgSma0);
 
-  // Holdings: shares per tradeable asset (tqqq, qqq, spy, qld, qqq5, sso, spxl) +
+  // Holdings: shares per tradeable asset (tqqq, qqq, spy, qld, sso, spxl) +
   // cash. Multiple buckets coexist mid-DCA; non-target buckets are sold instantly
   // each month, target bucket is bought via the active DCA ladder.
-  const shares = { tqqq: 0, qqq: 0, spy: 0, qld: 0, qqq5: 0, sso: 0, spxl: 0 };
+  const shares = { tqqq: 0, qqq: 0, spy: 0, qld: 0, sso: 0, spxl: 0 };
   let cash = initial;
   let totalInvested = initial;
   const startYear = parseInt(sm0[0].substring(0, 4));
@@ -175,16 +203,27 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   const smaLog = [{
     date: sm0[0],
     state, action: 'START',
-    price: ul0, shares: shares.tqqq + shares.qld + shares.qqq5 + shares.sso + shares.spxl,  // leveraged-side share count
+    price: ul0, shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,  // leveraged-side share count
     stockVal: totalAt(sm0) - cash, cash, total: totalAt(sm0),
     invested: initial,
   }];
   const qEnds = new Set();
   for (let qi = entryIdx; qi <= exitIdx; qi++) qEnds.add(quarterlyData[qi][0]);
 
+  // Dense control points for an honest max-drawdown: the FULL per-asset holding
+  // + cash at each step, so a daily revaluation captures crashes while parked in
+  // any bucket (cash, out-asset, or leveraged). Only built when asked.
+  const snapHoldings = () => {
+    const h = {};
+    for (const a of Object.keys(shares)) if (shares[a] > 0) h[a] = shares[a];
+    return h;
+  };
+  const ddControls = emitDD ? [{ date: sm0[0], h: snapHoldings(), cash }] : null;
+
   // Lazy-seed: if a target asset has no price yet (pre-history), defer until
   // a real price appears. Cash accumulates contributions in the meantime.
   let seeded = (target === 'cash') ? true : (ul0 > 0 && (priceOf(sm0, target) > 0));
+  let prevMonthStr = sm0[0].substring(0, 7);
 
   function actionFor(prevTarget, newTarget, primary, bg, prevBg) {
     if (prevTarget === newTarget) return null;
@@ -195,30 +234,45 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   }
 
   for (let m = mStart + 1; m <= mEnd; m++) {
-    const row    = monthlyData[m];
+    const row    = stepRows[m];
     const mDate  = row[0];
     const ulP    = row[ulCol] || 0;
     const assetP = row[assetCol] || 0;
     const unlevP = row[unlevCol] || 0;
-    const sma    = smaAtMon[m];
-    const rsi    = rsiAtMon ? rsiAtMon[m] : null;
-    const bgSma  = bgSmaAtMon ? bgSmaAtMon[m] : null;
+    const sma    = smaAtStep[m];
+    const rsiOhV   = rsiOhAtStep   ? rsiOhAtStep[m]   : null;
+    const rsiCoolV = rsiCoolAtStep ? rsiCoolAtStep[m] : null;
+    const bgSma  = bgSmaAtStep ? bgSmaAtStep[m] : null;
+
+    // A new calendar month gates contributions, cash interest, and DCA-ladder
+    // steps — so these stay monthly regardless of the daily/monthly check grain.
+    const curMonthStr = mDate.substring(0, 7);
+    const newMonth = curMonthStr !== prevMonthStr;
+    prevMonthStr = curMonthStr;
 
     const yr = parseInt(mDate.substring(0, 4));
     if (yr > lastYear) {
       currentMonthly = monthly * Math.pow(1 + annualRaise, yr - startYear);
       lastYear = yr;
     }
+    if (newMonth) {
+      // Accrue cash interest on idle cash, then add this month's contribution.
+      if (cash > 0) cash *= (1 + monthlyRate);
+      totalInvested += currentMonthly;
+      cash += currentMonthly;
+    }
 
-    // Accrue cash interest on whatever cash sits idle for the month.
-    if (cash > 0) cash *= (1 + monthlyRate);
-    // Contributions always land in cash; the rebalance below redeploys.
-    totalInvested += currentMonthly;
-    cash += currentMonthly;
-
-    const prevState = state;
+    // Raw signal for this step, then apply the confirmation filter: only commit
+    // a flip once it has persisted `confirmSteps` consecutive checks.
     const prevBg    = bgState;
-    state   = evalSignal(state, assetP, sma, rsi);
+    const desired   = evalSignal(state, assetP, sma, rsiOhV, rsiCoolV);
+    if (desired !== state) {
+      if (desired === pendingState) pendingCount++;
+      else { pendingState = desired; pendingCount = 1; }
+      if (confirmSteps <= 1 || pendingCount >= confirmSteps) { state = desired; pendingCount = 0; }
+    } else {
+      pendingState = state; pendingCount = 0;
+    }
     bgState = evalBodyguard(unlevP, bgSma);
     const prevTarget = target;
     target  = computeTarget(state, bgState);
@@ -244,16 +298,20 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
       else                                dcaRemaining = dcaToOutMonths || 0;
     }
 
-    // Deploy from cash → target stock (if any). 0 = instant; N = ramp 1/N of
-    // remaining cash each month for N months.
+    // Deploy from cash → target stock. An instant deploy (no active ladder)
+    // happens on any step; a laddered deploy releases 1/N of cash per MONTH.
     if (seeded && target !== 'cash' && cash > 0) {
       const p = priceOf(row, target);
       if (p > 0) {
-        const fraction = dcaRemaining > 1 ? 1 / dcaRemaining : 1;
-        const buy = cash * fraction;
-        shares[target] += buy / p;
-        cash -= buy;
-        if (dcaRemaining > 0) dcaRemaining--;
+        if (dcaRemaining > 1) {
+          if (newMonth) {
+            const buy = cash * (1 / dcaRemaining);
+            shares[target] += buy / p; cash -= buy; dcaRemaining--;
+          }
+        } else {
+          shares[target] += cash / p; cash = 0;
+          if (dcaRemaining === 1) dcaRemaining = 0;
+        }
       }
     }
 
@@ -261,19 +319,21 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (flippedAction) {
       smaLog.push({
         date: mDate, state, action: flippedAction,
-        price: ulP, shares: shares.tqqq + shares.qld + shares.qqq5 + shares.sso + shares.spxl,
+        price: ulP, shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,
         stockVal: totalAt(row) - cash,
         cash, total: totalAt(row),
         invested: totalInvested,
       });
     }
 
+    if (ddControls) ddControls.push({ date: mDate, h: snapHoldings(), cash });
+
     if (qEnds.has(mDate)) {
       smaPoints.push({ date: mDate, value: totalAt(row), state });
     }
   }
 
-  return { smaPoints, smaLog, totalContributed: totalInvested };
+  return { smaPoints, smaLog, ddControls, totalContributed: totalInvested };
 }
 
 function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, opts) {
@@ -321,7 +381,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const spikeTrigPct  = opts.spikeTriggerPct != null ? +opts.spikeTriggerPct : 100;
   const spikeTrigger  = spikeTrigPct > 0 ? spikeTrigPct / 100 : Infinity;
   // Which quarterlyData column holds the price of the leveraged ETF this run
-  // trades. Default is column 1 (TQQQ) for backward compat. Column 5 is QQQ5.
+  // trades. Default is column 1 (TQQQ) for backward compat.
   const ulCol         = opts.underlyingCol != null ? opts.underlyingCol : 1;
   // Initial cash fraction (rest goes to the underlying). Default 0.40 matches
   // canonical 9Sig 60/40. Spike-reset target tracks (1 - cashPct) so the
@@ -338,7 +398,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const buyThrottle = Math.max(0, Math.min(1, (opts.buyThrottlePct != null ? +opts.buyThrottlePct : 90) / 100));
   // Park asset for the non-underlying ("cash") side. Default 'cash' keeps the
   // safety bucket as actual cash earning the configured rate. Any other ticker
-  // (qqq/spy/qld/qqq5/sso/spxl/tqqq) holds the safety side as shares of that
+  // (qqq/spy/qld/sso/spxl/tqqq) holds the safety side as shares of that
   // asset instead — contributions and rebalance proceeds buy into it, and the
   // cash rate stops accruing (cash-rate only applies to actual cash). The
   // safety side's dollar value floats with the park asset's price; rebalance
@@ -438,7 +498,7 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const fastMonthly = (qData === periodData || (period === 'quarterly' && qData === quarterlyData)) && monthsInPeriod && (period !== 'quarterly' || monthlyByQuarter);
   const monthsLookup = (period === 'quarterly') ? monthlyByQuarter : monthsInPeriod;
   const qSlice = qData.slice(entryIdx, exitIdx + 1);
-  if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], spyPoints: [], qldPoints: [], qqq5Points: [], ssoPoints: [], spxlPoints: [], totalContributed: initial };
+  if (qSlice.length < 2) return { log: [], bhPoints: [], qqqPoints: [], spyPoints: [], qldPoints: [], ssoPoints: [], spxlPoints: [], totalContributed: initial };
 
   // Initial allocation: stockPct in the leveraged ETF, cashPct in the park
   // bucket (cash by default, or shares of qqq/spy/etc. when parkAsset is set).
@@ -688,11 +748,11 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
     prevQDate = qDate;
   }
 
-  if (skipBH) return { log, samplePoints, totalContributed: totalInvested, qldPoints: [], qqq5Points: [], ssoPoints: [], spxlPoints: [] };
+  if (skipBH) return { log, samplePoints, totalContributed: totalInvested, qldPoints: [], ssoPoints: [], spxlPoints: [] };
 
   // Buy & hold for one asset column. Quarterly `points` (unchanged) plus, when
   // sampleQuarterly is on, quarter-end value snapshots so a yearly-grain run can
-  // still draw B&H at quarter resolution. `requirePrice` mirrors the SPY/QQQ5
+  // still draw B&H at quarter resolution. `requirePrice` mirrors the SPY
   // guard (skip a period whose period-end price is missing). The share-growth
   // math is identical to the four original loops — samples just observe it.
   function buyHold(col, requirePrice) {
@@ -733,14 +793,13 @@ function simulate(initial, monthly, annualRate, entryIdx, exitIdx, annualRaise, 
   const qqq  = buyHold(2, false);
   const spy  = buyHold(3, true);
   const qld  = buyHold(4, true);
-  const qqq5 = buyHold(5, true);
-  const sso  = buyHold(6, true);
-  const spxl = buyHold(7, true);
+  const sso  = buyHold(5, true);
+  const spxl = buyHold(6, true);
 
   return {
     log, samplePoints,
-    bhPoints: bh.points, qqqPoints: qqq.points, spyPoints: spy.points, qldPoints: qld.points, qqq5Points: qqq5.points, ssoPoints: sso.points, spxlPoints: spxl.points,
-    bhSample: bh.sample, qqqSample: qqq.sample, spySample: spy.sample, qldSample: qld.sample, qqq5Sample: qqq5.sample, ssoSample: sso.sample, spxlSample: spxl.sample,
+    bhPoints: bh.points, qqqPoints: qqq.points, spyPoints: spy.points, qldPoints: qld.points, ssoPoints: sso.points, spxlPoints: spxl.points,
+    bhSample: bh.sample, qqqSample: qqq.sample, spySample: spy.sample, qldSample: qld.sample, ssoSample: sso.sample, spxlSample: spxl.sample,
     totalContributed: totalInvested,
   };
 }

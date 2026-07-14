@@ -13,27 +13,27 @@ function parseDataFile(text) {
 }
 
 async function loadQQQDaily() {
-  const resp = await fetch('../../data/synthetic-qqq.tsv?v=baked');
+  const resp = await fetch('data/synthetic-qqq.tsv?v=baked');
   return parseDataFile(await resp.text());
 }
 
 async function loadTQQQDaily() {
-  const resp = await fetch('../../data/synthetic-tqqq.tsv?v=baked');
+  const resp = await fetch('data/synthetic-tqqq.tsv?v=baked');
   return parseDataFile(await resp.text());
 }
 
 async function loadSPYDaily() {
-  const resp = await fetch('../../data/spy.tsv?v=baked');
+  const resp = await fetch('data/spy.tsv?v=baked');
   return parseDataFile(await resp.text());
 }
 
 async function loadSOXLDaily() {
-  const resp = await fetch('../../data/synthetic-soxl.tsv?v=baked');
+  const resp = await fetch('data/synthetic-soxl.tsv?v=baked');
   return parseDataFile(await resp.text());
 }
 
 async function loadQQQ5Daily() {
-  const resp = await fetch('../../data/synthetic-qqq5.tsv?v=baked');
+  const resp = await fetch('data/synthetic-qqq5.tsv?v=baked');
   return parseDataFile(await resp.text());
 }
 

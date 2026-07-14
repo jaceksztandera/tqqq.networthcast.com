@@ -23,6 +23,8 @@ const CONFIG_PARAM_IDS = {
   'sma':  ['select-sma-asset', 'select-sma-window', 'select-sma-underlying',
            'select-sma-cashrate', 'select-sma-entry-buf', 'select-sma-exit-buf',
            'select-sma-rsi-oh', 'select-sma-rsi-cool',
+           'select-sma-rsi-oh-window', 'select-sma-rsi-cool-window',
+           'select-sma-confirm',
            'select-sma-out-asset', 'select-sma-dca-in', 'select-sma-dca-to-out',
            'select-sma-bg-delev', 'select-sma-bg-gtfo'],
   'bh':   ['select-bh-underlying'],
@@ -287,7 +289,7 @@ function applyParams(type, params) {
   }
 }
 function pget(p, id, dflt) { return (p && id in p) ? p[id] : dflt; }
-function ulColFromVal(v) { return v === 'qqq5' ? 5 : v === 'qld' ? 4 : v === 'sso' ? 6 : v === 'spxl' ? 7 : 1; }
+function ulColFromVal(v) { return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; }
 
 // Canonical (HTML-default) value of every strategy knob, snapshotted ONCE at
 // load. This must NOT be re-read live: picking a value from a bar-preview
@@ -383,7 +385,6 @@ data.tqqq  : daily closing price of TQQQ  (3x Nasdaq-100), synthesized back to 1
 data.qqq   : daily closing price of QQQ   (Nasdaq-100)
 data.spy   : daily closing price of SPY   (S&P 500)
 data.qld   : daily closing price of QLD   (2x Nasdaq-100, ProShares Ultra QQQ)
-data.qqq5  : daily closing price of a synthetic 5x Nasdaq-100
 data.sso   : daily closing price of SSO   (2x S&P 500, ProShares Ultra S&P500)
 data.spxl  : daily closing price of SPXL  (3x S&P 500, Direxion Daily S&P500 Bull 3x)
 - Prices are positive numbers; a few of the earliest values may be 0 (missing history) — guard divisions.
@@ -418,7 +419,7 @@ read what happened:
 
 === HOW THE SIMULATION WORKS ===
 - You manage cash and holdings yourself in local variables — nothing is auto-invested.
-- Trade at that day's close, data.<asset>[i]. tqqq, qld, qqq5, sso, and spxl are ALREADY leveraged products; do not
+- Trade at that day's close, data.<asset>[i]. tqqq, qld, sso, and spxl are ALREADY leveraged products; do not
   invent additional borrowing or leverage.
 - Add p.monthly of new cash at each new month (optionally grown by p.annualRaise per calendar year),
   and record that as a row with action "contribution".
@@ -475,14 +476,13 @@ function buildCustomPrompt(desc) {
 let _customDataCache = null;
 function buildCustomData() {
   if (_customDataCache) return _customDataCache;
-  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], qqq5: [], sso: [], spxl: [] };
+  if (typeof daily === 'undefined' || !daily) return { dates: [], tqqq: [], qqq: [], spy: [], qld: [], sso: [], spxl: [] };
   _customDataCache = {
     dates: daily.map(d => d.date),
     tqqq:  daily.map(d => d.tqqq),
     qqq:   daily.map(d => d.qqq),
     spy:   daily.map(d => d.spy),
     qld:   daily.map(d => d.qld),
-    qqq5:  daily.map(d => d.qqq5),
     sso:   daily.map(d => d.sso),
     spxl:  daily.map(d => d.spxl),
   };
@@ -764,7 +764,10 @@ function computeConfigSeries(cfg, ctx) {
   // to revalue against. Filled per strategy below; null → fall back to the
   // rebalance-grain series drawdown (e.g. Invested Compounded, custom).
   let ddControls = null, ddKey = null;
-  const UL_KEY = { 1: 'tqqq', 2: 'qqq', 3: 'spy', 4: 'qld', 5: 'qqq5', 6: 'sso', 7: 'spxl' };
+  // Multi-asset drawdown control points (SMA can hold leveraged + out-asset +
+  // cash at once). When set, takes precedence over the single-asset path.
+  let ddMulti = null;
+  const UL_KEY = { 1: 'tqqq', 2: 'qqq', 3: 'spy', 4: 'qld', 5: 'sso', 6: 'spxl' };
 
   if (cfg.type === '9sig') {
     const cd = +pget(p, 'select-9sig-crashdrop', 30);
@@ -796,7 +799,7 @@ function computeConfigSeries(cfg, ctx) {
     };
     ddControls = (r.log || []).map(l => ({ date: l.date, shares: l.price > 0 ? l.tqqqVal / l.price : 0, cash: l.cash }));
     ddKey = UL_KEY[opts.underlyingCol] || 'tqqq';
-    if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: '9sig', log: r.log, bhPoints: r.bhPoints, qqqPoints: r.qqqPoints, spyPoints: r.spyPoints, qldPoints: r.qldPoints, qqq5Points: r.qqq5Points, ssoPoints: r.ssoPoints, spxlPoints: r.spxlPoints };
+    if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: '9sig', log: r.log, bhPoints: r.bhPoints, qqqPoints: r.qqqPoints, spyPoints: r.spyPoints, qldPoints: r.qldPoints, ssoPoints: r.ssoPoints, spxlPoints: r.spxlPoints };
   } else if (cfg.type === 'sma') {
     const opts = {
       smaAsset: pget(p, 'select-sma-asset', 'qqq') || 'qqq',
@@ -811,12 +814,17 @@ function computeConfigSeries(cfg, ctx) {
       dcaToOutMonths: +pget(p, 'select-sma-dca-to-out', 0) || 0,
       bgDelevPct: +pget(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +pget(p, 'select-sma-bg-gtfo', 0) || 0,
+      rsiOhWindow: +pget(p, 'select-sma-rsi-oh-window', 10) || 10,
+      rsiCoolWindow: +pget(p, 'select-sma-rsi-cool-window', 10) || 10,
+      rebalanceCheck: 'daily',
+      confirmSteps: +pget(p, 'select-sma-confirm', 0) || 0,
+      emitDD: true,
     };
     const cashRate = (+pget(p, 'select-sma-cashrate', 4) || 0) / 100;
     const r = simulateSMA(initial, monthly, cashRate, simEntryIdx, exitIdx, annualRaise, opts);
     points = (r.smaPoints || []).map(pt => ({ date: pt.date, value: pt.value }));
-    ddControls = (r.smaLog || []).map(row => ({ date: row.date, shares: row.shares, cash: row.cash }));
-    ddKey = UL_KEY[opts.underlyingCol] || 'qqq';
+    // Full multi-asset holdings per step → honest daily-revalued max drawdown.
+    ddMulti = r.ddControls || null;
     if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: 'sma', smaLog: r.smaLog, smaPoints: r.smaPoints };
   } else if (cfg.type === 'bh') {
     const r = simulate(initial, monthly, 0, simEntryIdx, exitIdx, annualRaise, {});
@@ -824,14 +832,13 @@ function computeConfigSeries(cfg, ctx) {
     const arr = key === 'qqq' ? r.qqqPoints
               : key === 'spy' ? r.spyPoints
               : key === 'qld' ? (r.qldPoints || [])
-              : key === 'qqq5' ? (r.qqq5Points || [])
               : key === 'sso' ? (r.ssoPoints || [])
               : key === 'spxl' ? (r.spxlPoints || [])
               : r.bhPoints;
     points = (arr || []).map(pt => ({ date: pt.date, value: pt.value }));
     ddControls = (arr || []).map(pt => ({ date: pt.date, shares: pt.shares, cash: 0 }));
-    ddKey = key === 'qqq' ? 'qqq' : key === 'spy' ? 'spy' : key === 'qld' ? 'qld' : key === 'qqq5' ? 'qqq5' : key === 'sso' ? 'sso' : key === 'spxl' ? 'spxl' : 'tqqq';
-    if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: 'bh', log: r.log, bhPoints: r.bhPoints, qqqPoints: r.qqqPoints, spyPoints: r.spyPoints, qldPoints: r.qldPoints, qqq5Points: r.qqq5Points, ssoPoints: r.ssoPoints, spxlPoints: r.spxlPoints };
+    ddKey = key === 'qqq' ? 'qqq' : key === 'spy' ? 'spy' : key === 'qld' ? 'qld' : key === 'sso' ? 'sso' : key === 'spxl' ? 'spxl' : 'tqqq';
+    if (window._editingConfigId === cfg.id) window._editingConfigSim = { type: 'bh', log: r.log, bhPoints: r.bhPoints, qqqPoints: r.qqqPoints, spyPoints: r.spyPoints, qldPoints: r.qldPoints, ssoPoints: r.ssoPoints, spxlPoints: r.spxlPoints };
   } else if (cfg.type === 'invested') {
     const rate = (typeof sliderToRate === 'function' ? sliderToRate(+pget(p, 'slider-rate', 0)) : 0) / 100;
     const r = simulate(initial, monthly, 0, simEntryIdx, exitIdx, annualRaise, { baselineRate: rate });
@@ -848,7 +855,9 @@ function computeConfigSeries(cfg, ctx) {
   // #3 Daily-sampled drawdown when we have control points to revalue daily;
   // otherwise fall back to the rebalance-grain series drawdown.
   const dailyRows = (typeof daily !== 'undefined' && daily) ? daily : null;
-  const dd = (ddControls && ddControls.length && dailyRows && typeof computeDailyMaxDrawdown === 'function')
+  const dd = (ddMulti && ddMulti.length && dailyRows && typeof computeDailyMaxDrawdownMulti === 'function')
+    ? computeDailyMaxDrawdownMulti(ddMulti, dailyRows)
+    : (ddControls && ddControls.length && dailyRows && typeof computeDailyMaxDrawdown === 'function')
     ? computeDailyMaxDrawdown(ddControls, dailyRows, ddKey)
     : ((typeof computeMaxDrawdown === 'function') ? computeMaxDrawdown(data, labels) : { pct: 0, peakDate: null, troughDate: null });
   return { data, cagr, maxDD: dd.pct * 100, start: startV, end: finalV, subPoints, ddPeak: dd.peakDate, ddTrough: dd.troughDate };
@@ -1213,7 +1222,7 @@ function renderCustomBuilder() {
       <div class="builder-modal">
         <div class="sc-modal-title">Describe your strategy</div>
         <div class="wip-note">⚠ Custom strategies are a work in progress — their results may still change.</div>
-        <div class="builder-help">In plain English, describe your strategy in as much detail as you can. You can base it on any of these tickers — <b>TQQQ</b>, <b>QLD</b>, <b>QQQ</b>, <b>SPY</b>, <b>QQQ5</b>, <b>SSO</b>, <b>SPXL</b> — plus entry/exit rules, thresholds, and how monthly contributions are handled.</div>
+        <div class="builder-help">In plain English, describe your strategy in as much detail as you can. You can base it on any of these tickers — <b>TQQQ</b>, <b>QLD</b>, <b>QQQ</b>, <b>SPY</b>, <b>SSO</b>, <b>SPXL</b> — plus entry/exit rules, thresholds, and how monthly contributions are handled.</div>
         <textarea id="builder-desc" class="builder-textarea" placeholder="e.g. Hold TQQQ. At each month-end, if QQQ closed below its 200-day moving average, move everything to cash; when it closes back above, buy TQQQ again. Add the monthly contribution to whatever I'm holding.">${_escHtml(cfg.desc || '')}</textarea>
         <div class="builder-actions">
           <button type="button" class="sc-modal-btn" data-builder-cancel>Cancel</button>
@@ -1765,7 +1774,7 @@ function renderCustomPanelBody(cfgId) {
   let html = '';
 
   html += `<div class="wip-note">⚠ Custom strategies are a work in progress — their results may still change.</div>`;
-  html += `<div class="custom-tickers-note">Your strategy can read these tickers: <code>tqqq</code>, <code>qld</code>, <code>qqq</code>, <code>spy</code>, <code>qqq5</code>, <code>sso</code>, <code>spxl</code> (daily closes). Base your rules on any of them.</div>`;
+  html += `<div class="custom-tickers-note">Your strategy can read these tickers: <code>tqqq</code>, <code>qld</code>, <code>qqq</code>, <code>spy</code>, <code>sso</code>, <code>spxl</code> (daily closes). Base your rules on any of them.</div>`;
   html += `<button type="button" id="custom-edit-builder" class="custom-edit-btn">Edit strategy</button>`;
   if (cfg.desc) html += `<div class="custom-desc-readout">${_escHtml(cfg.desc)}</div>`;
   if (err) html += `<div class="custom-error"><b>Couldn't run it:</b> ${_escHtml(err)} <span class="custom-error-hint">— click Edit strategy to fix the code.</span></div>`;

@@ -88,7 +88,7 @@ function moneyWeightedCAGR(initial, monthly, annualRaise, startDate, endDate, ye
 // crashes that the rebalance-grain `total` series cannot show.
 //   controls:  [{ date, shares, cash }]  sorted ascending by date
 //   dailyRows: [{ date, [priceKey]:Number, ... }]  e.g. the global `daily`
-//   priceKey:  daily field to revalue against ('tqqq'|'qqq'|'spy'|'qld'|'qqq5'|'sso'|'spxl')
+//   priceKey:  daily field to revalue against ('tqqq'|'qqq'|'spy'|'qld'|'sso'|'spxl')
 function computeDailyMaxDrawdown(controls, dailyRows, priceKey) {
   const empty = { pct: 0, peakDate: null, troughDate: null };
   if (!controls || !controls.length || !dailyRows || !dailyRows.length) return empty;
@@ -114,7 +114,40 @@ function computeDailyMaxDrawdown(controls, dailyRows, priceKey) {
   return { pct: maxDD, peakDate: bestPeakDate, troughDate: bestTroughDate };
 }
 
+// Max drawdown (fraction 0..1) for a portfolio that holds MULTIPLE assets at
+// once (the SMA strategy can sit in a leveraged ETF, an unleveraged out-asset,
+// and cash — sometimes mixed mid-DCA). Each control carries the full holding
+// map + cash; between controls the holding is constant and the portfolio is
+// revalued at every daily close. This fixes the single-asset reconstruction
+// that ignored the out-asset bucket entirely.
+//   controls:  [{ date, h: { asset: shares, ... }, cash }]  ascending by date
+//   dailyRows: [{ date, tqqq, qqq, spy, ... }]  e.g. the global `daily`
+function computeDailyMaxDrawdownMulti(controls, dailyRows) {
+  const empty = { pct: 0, peakDate: null, troughDate: null };
+  if (!controls || !controls.length || !dailyRows || !dailyRows.length) return empty;
+  const startDate = controls[0].date;
+  const endDate = controls[controls.length - 1].date;
+  let peak = -Infinity, peakDate = null, maxDD = 0, bestPeakDate = null, bestTroughDate = null, ci = 0;
+  for (let i = 0; i < dailyRows.length; i++) {
+    const row = dailyRows[i];
+    if (row.date < startDate) continue;
+    if (row.date > endDate) break;
+    while (ci + 1 < controls.length && controls[ci + 1].date <= row.date) ci++;
+    const c = controls[ci];
+    let v = c.cash || 0;
+    const h = c.h || {};
+    for (const a in h) { const px = row[a]; if (px > 0) v += h[a] * px; }
+    if (!Number.isFinite(v) || v <= 0) continue;
+    if (v > peak) { peak = v; peakDate = row.date; }
+    if (peak > 0) {
+      const dd = (peak - v) / peak;
+      if (dd > maxDD) { maxDD = dd; bestPeakDate = peakDate; bestTroughDate = row.date; }
+    }
+  }
+  return { pct: maxDD, peakDate: bestPeakDate, troughDate: bestTroughDate };
+}
+
 // Node test harness export (no-op in the browser).
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { computeMoneyWeightedReturn, buildContributionFlows, moneyWeightedCAGR, computeDailyMaxDrawdown };
+  module.exports = { computeMoneyWeightedReturn, buildContributionFlows, moneyWeightedCAGR, computeDailyMaxDrawdown, computeDailyMaxDrawdownMulti };
 }

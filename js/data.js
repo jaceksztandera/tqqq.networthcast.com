@@ -42,19 +42,13 @@ async function loadSPXLDaily() {
   return parseDataFile(await resp.text());
 }
 
-async function loadQQQ5Daily() {
-  const resp = await fetch('data/synthetic-qqq5.tsv?v=baked');
-  return parseDataFile(await resp.text());
-}
-
 // Merge daily TSVs by date. The synthetic TSVs already contain synthesized
 // pre-inception rows (baked by update_data.py), so this is a straight join —
 // no synthesis here. monthlyData column layout:
-//   [date, tqqq, qqq, spy, qld, qqq5, sso, spxl]   (cols 0..7)
-function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily, qldDaily, ssoDaily, spxlDaily) {
+//   [date, tqqq, qqq, spy, qld, sso, spxl]   (cols 0..6)
+function buildDaily(qqqDaily, tqqqDaily, spyDaily, qldDaily, ssoDaily, spxlDaily) {
   const tqqqMap = new Map(tqqqDaily.map(d => [d[0], d[1]]));
   const spyMap  = new Map(spyDaily.map(d => [d[0], d[1]]));
-  const qqq5Map = qqq5Daily ? new Map(qqq5Daily.map(d => [d[0], d[1]])) : null;
   const qldMap  = qldDaily  ? new Map(qldDaily.map(d  => [d[0], d[1]])) : null;
   const ssoMap  = ssoDaily  ? new Map(ssoDaily.map(d  => [d[0], d[1]])) : null;
   const spxlMap = spxlDaily ? new Map(spxlDaily.map(d => [d[0], d[1]])) : null;
@@ -68,7 +62,6 @@ function buildDaily(qqqDaily, tqqqDaily, spyDaily, qqq5Daily, qldDaily, ssoDaily
         tqqq: tqqqPrice,
         spy:  spyMap.get(date) || 0,
         qld:  qldMap  ? (qldMap.get(date)  || 0) : 0,
-        qqq5: qqq5Map ? (qqq5Map.get(date) || 0) : 0,
         sso:  ssoMap  ? (ssoMap.get(date)  || 0) : 0,
         spxl: spxlMap ? (spxlMap.get(date) || 0) : 0,
       });
@@ -140,7 +133,7 @@ let monthlyByQuarter = null;
 // for the named period. Mirrors the existing monthlyData / quarterlyData
 // shape — same columns, same date format. Called once after `daily` loads.
 function buildPeriodData(periodFn) {
-  return lastOfPeriod(daily, periodFn).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl]);
+  return lastOfPeriod(daily, periodFn).map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.sso, d.spxl]);
 }
 
 // Build the months-in-period index for the given periodData. monthsInPeriod[i]
@@ -273,7 +266,7 @@ function getShiftedPeriodData(period, dayShift) {
     if (naturalIdx == null) return p;
     const shiftedIdx = Math.max(0, naturalIdx - dayShift);
     const d = daily[shiftedIdx];
-    return [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl];
+    return [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.sso, d.spxl];
   });
 }
 
@@ -297,7 +290,7 @@ function buildEnvelopeQData(period, dayOffset, entryDate, exitDate) {
   if (entryDailyIdx == null) return [];
   const periodDays = PERIOD_DAYS[period] || 63;
   const entryD = daily[entryDailyIdx];
-  const rowFor = (d) => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.qqq5, d.sso, d.spxl];
+  const rowFor = (d) => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.sso, d.spxl];
   const result = [rowFor(entryD)];
   let dailyIdx = entryDailyIdx + Math.max(1, dayOffset);
   while (dailyIdx < daily.length) {
@@ -320,9 +313,18 @@ function buildEnvelopeQData(period, dayOffset, entryDate, exitDate) {
 // runs many simulations so this matters.
 const SMA_WINDOWS = [100, 150, 200, 250];
 const SMA_ASSETS  = ['qqq', 'spy'];
-const RSI_WINDOW  = 10; // fixed; Reddit's TFTLT default. Could be exposed if needed.
-let smaAtMonthlyByKey = null; // { 'qqq_200': [sma per monthlyData entry, or null] }
-let rsiAtMonthlyByAsset = null; // { 'qqq': [RSI(10) per monthlyData entry, or null] }
+// RSI periods the UI exposes: every day from 2 (very twitchy) to 30 (very
+// smooth). Precomputed for each so the preview bars can sweep the whole range.
+const RSI_WINDOWS = Array.from({ length: 29 }, (_, i) => i + 2); // 2,3,…,30
+// Monthly-resolution signals (default rebalance grain) and daily-resolution
+// signals (used when the SMA strategy checks daily). Keyed 'asset_window'.
+let smaAtMonthlyByKey = null;   // { 'qqq_200': [sma per monthlyData entry, or null] }
+let smaAtDailyByKey   = null;   // { 'qqq_200': [sma per daily entry, or null] }
+let rsiAtMonthlyByKey = null;   // { 'qqq_10':  [rsi per monthlyData entry, or null] }
+let rsiAtDailyByKey   = null;   // { 'qqq_10':  [rsi per daily entry, or null] }
+// `daily` in the same row shape as monthlyData ([date, tqqq, qqq, spy, qld,
+// sso, spxl]) so the SMA loop can step over days when checking daily.
+let dailyRows = null;
 
 function rollingSMA(values, window) {
   const out = new Array(values.length);
@@ -367,29 +369,28 @@ function rollingRSI(values, window) {
 }
 
 function precomputeSMASeries() {
-  smaAtMonthlyByKey = {};
-  rsiAtMonthlyByAsset = {};
+  smaAtMonthlyByKey = {}; smaAtDailyByKey = {};
+  rsiAtMonthlyByKey = {}; rsiAtDailyByKey = {};
+  dailyRows = null;
   if (!daily || !monthlyData || !dailyDateToIdx) return;
-  const seriesByAsset = {
-    qqq: daily.map(d => d.qqq),
-    spy: daily.map(d => d.spy),
-  };
+  // Sample a full daily series onto monthlyData positions.
+  const toMonthly = (dailyArr) => monthlyData.map(([date]) => {
+    const idx = dailyDateToIdx.get(date);
+    return idx != null ? dailyArr[idx] : null;
+  });
+  const seriesByAsset = { qqq: daily.map(d => d.qqq), spy: daily.map(d => d.spy) };
   for (const asset of SMA_ASSETS) {
     const dailyVals = seriesByAsset[asset];
     for (const w of SMA_WINDOWS) {
       const dailySMA = rollingSMA(dailyVals, w);
-      // Map each monthlyData entry's date → SMA value on that day. Stored
-      // as a parallel array so simulateSMA can index by monthly position.
-      smaAtMonthlyByKey[asset + '_' + w] = monthlyData.map(([date]) => {
-        const idx = dailyDateToIdx.get(date);
-        return idx != null ? dailySMA[idx] : null;
-      });
+      smaAtDailyByKey[asset + '_' + w]   = dailySMA;
+      smaAtMonthlyByKey[asset + '_' + w] = toMonthly(dailySMA);
     }
-    // RSI(10) at each monthly entry — same indexing scheme as SMA.
-    const dailyRSI = rollingRSI(dailyVals, RSI_WINDOW);
-    rsiAtMonthlyByAsset[asset] = monthlyData.map(([date]) => {
-      const idx = dailyDateToIdx.get(date);
-      return idx != null ? dailyRSI[idx] : null;
-    });
+    for (const rw of RSI_WINDOWS) {
+      const dailyRSI = rollingRSI(dailyVals, rw);
+      rsiAtDailyByKey[asset + '_' + rw]   = dailyRSI;
+      rsiAtMonthlyByKey[asset + '_' + rw] = toMonthly(dailyRSI);
+    }
   }
+  dailyRows = daily.map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.sso, d.spxl]);
 }
