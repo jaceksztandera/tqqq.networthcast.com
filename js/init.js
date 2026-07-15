@@ -28,7 +28,12 @@
     `Each ghost line is the same 9sig strategy with rebalance shifted by 1..${ENVELOPE_DAYS_PER_QUARTER} trading days within the quarter — pure rebalance-day sensitivity, same entry/exit dates.`;
   const maxQIdx = quarterlyData.length - 1;
   document.getElementById('slider-exit').value = maxQIdx;
-  document.getElementById('slider-entry').value = Math.max(0, maxQIdx - 60); // default span = past 15y (60 quarters)
+  // Default the entry to Q1 2010 (the TQQQ era — real 3× funds launched then).
+  // The first quarter ending on/after 2010-01-01 is Q1 2010; fall back to the
+  // earliest quarter if the data starts later.
+  let defaultEntryIdx = quarterlyData.findIndex(r => r[0] >= '2010-01-01');
+  if (defaultEntryIdx < 0) defaultEntryIdx = 0;
+  document.getElementById('slider-entry').value = defaultEntryIdx;
   window._dualRange.setMax(maxQIdx);
 
   // Restore saved state: URL params > localStorage > defaults
@@ -70,8 +75,9 @@
   if (params.get('soa') !== null) { document.getElementById('select-sma-out-asset').value   = params.get('soa'); hasUrlParams = true; }
   if (params.get('sdi') !== null) { document.getElementById('select-sma-dca-in').value      = params.get('sdi'); hasUrlParams = true; }
   if (params.get('sdo') !== null) { document.getElementById('select-sma-dca-to-out').value  = params.get('sdo'); hasUrlParams = true; }
-  if (params.get('sbd') !== null) { document.getElementById('select-sma-bg-delev').value    = params.get('sbd'); hasUrlParams = true; }
   if (params.get('sbg') !== null) { document.getElementById('select-sma-bg-gtfo').value     = params.get('sbg'); hasUrlParams = true; }
+  if (params.get('sbga') !== null) { document.getElementById('select-sma-bg-asset').value   = params.get('sbga'); hasUrlParams = true; }
+  if (params.get('stc') !== null) { document.getElementById('select-sma-cost').value        = params.get('stc'); hasUrlParams = true; }
   // 9sig underlying + signal-line growth
   if (params.get('nu') !== null) { document.getElementById('select-9sig-underlying').value = params.get('nu'); hasUrlParams = true; }
   if (params.get('ng') !== null) { document.getElementById('select-9sig-growth').value     = params.get('ng'); hasUrlParams = true; }

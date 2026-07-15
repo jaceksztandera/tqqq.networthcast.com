@@ -26,7 +26,7 @@ const CONFIG_PARAM_IDS = {
            'select-sma-rsi-oh-window', 'select-sma-rsi-cool-window',
            'select-sma-confirm-buy', 'select-sma-confirm-sell',
            'select-sma-out-asset', 'select-sma-dca-in', 'select-sma-dca-to-out',
-           'select-sma-bg-delev', 'select-sma-bg-gtfo'],
+           'select-sma-bg-gtfo', 'select-sma-bg-asset', 'select-sma-cost'],
   'bh':   ['select-bh-underlying'],
   'invested': ['slider-rate'],
 };
@@ -289,7 +289,7 @@ function applyParams(type, params) {
   }
 }
 function pget(p, id, dflt) { return (p && id in p) ? p[id] : dflt; }
-function ulColFromVal(v) { return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; }
+function ulColFromVal(v) { return v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; }
 
 // Canonical (HTML-default) value of every strategy knob, snapshotted ONCE at
 // load. This must NOT be re-read live: picking a value from a bar-preview
@@ -812,8 +812,9 @@ function computeConfigSeries(cfg, ctx) {
       outAsset: pget(p, 'select-sma-out-asset', 'cash') || 'cash',
       dcaInMonths: +pget(p, 'select-sma-dca-in', 0) || 0,
       dcaToOutMonths: +pget(p, 'select-sma-dca-to-out', 0) || 0,
-      bgDelevPct: +pget(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +pget(p, 'select-sma-bg-gtfo', 0) || 0,
+      bgAsset: pget(p, 'select-sma-bg-asset', 'qqq') || 'qqq',
+      tradeCostPct: +pget(p, 'select-sma-cost', 0) || 0,
       rsiOhWindow: +pget(p, 'select-sma-rsi-oh-window', 10) || 10,
       rsiCoolWindow: +pget(p, 'select-sma-rsi-cool-window', 10) || 10,
       rebalanceCheck: 'daily',

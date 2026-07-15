@@ -31,7 +31,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" defer></script>
-<link rel="stylesheet" href="styles.css?v=45">
+<link rel="stylesheet" href="styles.css?v=71">
 </head>
 <body>
 
@@ -108,6 +108,7 @@
         <button type="button" id="chart-log-toggle" class="chart-log-toggle" aria-pressed="false" title="Toggle logarithmic Y-axis">log</button>
       </div>
       <div id="custom-tooltip"></div>
+      <div id="marker-tooltip"></div>
 
       <div class="control-group" style="margin-top:18px;margin-bottom:0">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -631,11 +632,17 @@
         <option value="qld">QLD</option>
         <option value="sso">SSO</option>
         <option value="spxl">SPXL</option>
+        <option value="qqq">QQQ</option>
+        <option value="spy">SPY</option>
       </select>
       when
       <select class="inline-select" id="select-sma-asset">
         <option value="qqq">QQQ</option>
         <option value="spy" selected>SPY</option>
+        <option value="tqqq">TQQQ</option>
+        <option value="qld">QLD</option>
+        <option value="sso">SSO</option>
+        <option value="spxl">SPXL</option>
       </select>
       closes above its
       <select class="inline-select" id="select-sma-window">
@@ -959,6 +966,10 @@
         <option value="cash">cash</option>
         <option value="qqq" selected>QQQ</option>
         <option value="spy">SPY</option>
+        <option value="tqqq">TQQQ</option>
+        <option value="qld">QLD</option>
+        <option value="sso">SSO</option>
+        <option value="spxl">SPXL</option>
       </select>
       instead.
       <span class="info-icon" tabindex="0" data-tip="What you hold after a sell.&#10;&#10;• cash — just waits, earning the interest rate below&#10;• QQQ / SPY — keeps your money in the plain, non-leveraged market: much safer than the 3× fund, but still grows if the market drifts up&#10;&#10;Example: sell TQQQ → sit in QQQ → jump back to TQQQ when the buy signal returns.">ⓘ</span>
@@ -1003,6 +1014,7 @@
       <span class="info-icon" tabindex="0" data-tip="While you're out of the market and sitting in cash, this is the yearly interest that cash earns — like a savings account or T-bills.&#10;&#10;Example: 4% = idle cash grows about 4% a year while you wait to buy back in.">ⓘ</span>
     </div>
 
+
     <div class="strategy-panel-section-label" style="margin-top:18px">Ease into your trades</div>
     <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">
       By default a buy or sell happens all at once. You can spread a buy over a few months so you're not betting everything on one day's price. Selling is always instant — only buying can be eased in.
@@ -1010,8 +1022,8 @@
     <div class="adaptive-line">
       When you buy, ease into the leveraged fund over
       <select class="inline-select" id="select-sma-dca-in">
-        <option value="0">0 (instant)</option>
-        <option value="1" selected>1 month</option>
+        <option value="0" selected>instant</option>
+        <option value="1">1 month</option>
         <option value="2">2 months</option>
         <option value="3">3 months</option>
         <option value="4">4 months</option>
@@ -1028,7 +1040,7 @@
     <div class="adaptive-line">
       When you sell, ease into your backup holding over
       <select class="inline-select" id="select-sma-dca-to-out">
-        <option value="0">0 (instant)</option>
+        <option value="0">instant</option>
         <option value="1">1 month</option>
         <option value="2" selected>2 months</option>
         <option value="3">3 months</option>
@@ -1045,39 +1057,43 @@
       <span class="info-icon" tabindex="0" data-tip="Only matters if you park in QQQ/SPY instead of cash.&#10;&#10;On a sell it dumps the 3× fund right away, then eases into QQQ/SPY over this many months.&#10;&#10;Example: 6 = move a sixth of the money each month for six months.&#10;If the buy signal returns mid-way, it stops and switches back to the 3× fund.">ⓘ</span>
     </div>
 
+    <div class="strategy-panel-section-label" style="margin-top:18px">Trading cost</div>
+    <div class="adaptive-line">
+      Each buy or sell costs
+      <select class="inline-select" id="select-sma-cost">
+        <option value="0">0%</option>
+        <option value="0.01">0.01%</option>
+        <option value="0.02">0.02%</option>
+        <option value="0.03">0.03%</option>
+        <option value="0.05">0.05%</option>
+        <option value="0.1" selected>0.1%</option>
+        <option value="0.15">0.15%</option>
+        <option value="0.2">0.2%</option>
+        <option value="0.25">0.25%</option>
+        <option value="0.3">0.3%</option>
+        <option value="0.5">0.5%</option>
+        <option value="0.75">0.75%</option>
+        <option value="1">1%</option>
+      </select>
+      in fees and slippage.
+      <span class="info-icon" tabindex="0" data-tip="What each trade costs you — broker fees plus slippage (the gap between the price you expect and the price you actually get).&#10;&#10;Charged on every buy AND every sell, so switching funds pays it twice.&#10;&#10;Example: 0.1% turns a $10,000 buy into $9,990 of fund. A strategy that trades often (like this one) feels this a lot — crank it up to stress-test whether the edge survives real-world friction.">ⓘ</span>
+    </div>
+
     <div class="strategy-panel-section-label" style="margin-top:18px">Bubble insurance</div>
     <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">
-      A safety brake for bubbles. When the market has run far above its average line (think 1999 or late 2021), holding a 3× fund is extra risky. This steps you down early no matter what the main signal says. The two rules below use how far QQQ is above its own 200-day average.
+      A safety brake for bubbles. When the market has run far above its average line (think 1999 or late 2021), holding a 3× fund is extra risky — so this rule sells everything to cash early, no matter what the main buy/sell signal says. It measures how far the ticker you pick below sits above its own moving average, and it's separate from "What to hold when you sell" above (that only decides where normal trend exits go).
     </div>
     <div class="adaptive-line">
-      Switch to plain QQQ when QQQ is
-      <select class="inline-select" id="select-sma-bg-delev">
-        <option value="5">+5%</option>
-        <option value="10">+10%</option>
-        <option value="15" selected>+15%</option>
-        <option value="20">+20%</option>
-        <option value="25">+25%</option>
-        <option value="30">+30%</option>
-        <option value="35">+35%</option>
-        <option value="40">+40%</option>
-        <option value="45">+45%</option>
-        <option value="50">+50%</option>
-        <option value="55">+55%</option>
-        <option value="60">+60%</option>
-        <option value="65">+65%</option>
-        <option value="70">+70%</option>
-        <option value="75">+75%</option>
-        <option value="80">+80%</option>
-        <option value="85">+85%</option>
-        <option value="90">+90%</option>
-        <option value="95">+95%</option>
-        <option value="100">+100%</option>
-        <option value="0">off</option>
+      Sell everything to cash when
+      <select class="inline-select" id="select-sma-bg-asset">
+        <option value="qqq" selected>QQQ</option>
+        <option value="spy">SPY</option>
+        <option value="tqqq">TQQQ</option>
+        <option value="qld">QLD</option>
+        <option value="sso">SSO</option>
+        <option value="spxl">SPXL</option>
       </select>
-      above its average.
-    </div>
-    <div class="adaptive-line">
-      Sell everything to cash when QQQ is
+      is
       <select class="inline-select" id="select-sma-bg-gtfo">
         <option value="5">+5%</option>
         <option value="10">+10%</option>
@@ -1111,18 +1127,18 @@
      returning browsers fetch the new files instead of serving stale cached
      copies (a stale JS file against fresh HTML throws null-element errors).
      Keep this in sync with APP_VERSION in controls.js. -->
-<script src="js/data.js?v=45"></script>
-<script src="js/utils.js?v=45"></script>
-<script src="js/simulate.js?v=45"></script>
-<script src="js/metrics.js?v=45"></script>
-<script src="js/chart.js?v=45"></script>
-<script src="js/controls.js?v=45"></script>
-<script src="js/analytics.js?v=45"></script>
-<script src="js/preview-dropdown.js?v=45"></script>
-<script src="js/saved-configs.js?v=45"></script>
-<script src="js/strategy-library-code.js?v=45"></script>
-<script src="js/strategy-library.js?v=45"></script>
-<script src="js/init.js?v=45"></script>
+<script src="js/data.js?v=71"></script>
+<script src="js/utils.js?v=71"></script>
+<script src="js/simulate.js?v=71"></script>
+<script src="js/metrics.js?v=71"></script>
+<script src="js/chart.js?v=71"></script>
+<script src="js/controls.js?v=71"></script>
+<script src="js/analytics.js?v=71"></script>
+<script src="js/preview-dropdown.js?v=71"></script>
+<script src="js/saved-configs.js?v=71"></script>
+<script src="js/strategy-library-code.js?v=71"></script>
+<script src="js/strategy-library.js?v=71"></script>
+<script src="js/init.js?v=71"></script>
 
 </body>
 </html>

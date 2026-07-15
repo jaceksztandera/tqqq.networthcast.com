@@ -1002,7 +1002,7 @@ const METRIC_OPTS = {
   monthly: [0, 50, 100, 150, 200, 250, 300, 400, 500, 600, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000, 5000, 7500, 10000, 15000, 20000, 25000, 50000, 100000],
   raise:   [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 10, 12, 15, 20],
   rate:    [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100],
-  sa:      ['qqq', 'spy'],
+  sa:      ['qqq', 'spy', 'tqqq', 'qld', 'sso', 'spxl'],
   sw:      [100, 150, 200, 250],
   // SMA enrichment: hysteresis buffers + RSI overheat exit.
   seb:     [0, 1, 2, 3, 4, 5],
@@ -1010,10 +1010,10 @@ const METRIC_OPTS = {
   sro:     [0, 60, 70, 80, 90],
   src:     [0, 40, 50, 60, 70],
   // SMA out-asset, DCA ladders, bodyguard rules.
-  soa:     ['cash', 'qqq', 'spy'],
+  soa:     ['cash', 'qqq', 'spy', 'tqqq', 'qld', 'sso', 'spxl'],
+  sbga:    ['qqq', 'spy', 'tqqq', 'qld', 'sso', 'spxl'],
   sdi:     [0, 3, 6, 12],
   sdo:     [0, 3, 6, 12],
-  sbd:     [0, 20, 25, 30, 35, 40],
   sbg:     [0, 30, 35, 40, 45, 50],
   // 9sig: which leveraged ETF to trade, and signal-line growth.
   nu:      ['tqqq', 'qld', 'sso', 'spxl'],
@@ -1029,7 +1029,7 @@ const METRIC_OPTS = {
   np:      ['weekly', 'monthly', 'quarterly', 'yearly'],
   nh:      [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
   // SMA: which leveraged ETF the strategy holds when the signal is "in".
-  su:      ['tqqq', 'qld', 'sso', 'spxl'],
+  su:      ['tqqq', 'qld', 'sso', 'spxl', 'qqq', 'spy'],
   // Per-strategy parked-cash interest rates (% per year).
   nr:      [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 14, 15, 16, 18, 20],
   scr:     [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 14, 15, 16, 18, 20],
@@ -1055,8 +1055,8 @@ const STRATEGY_METRIC_DEFS = {
   soa: { label: 'Out asset',  elementId: 'select-sma-out-asset',   fmt: v => String(v).toUpperCase(),      kind: 'string' },
   sdi: { label: 'DCA in',     elementId: 'select-sma-dca-in',      fmt: x => x === 0 ? 'instant' : `${x}mo`, kind: 'number' },
   sdo: { label: 'DCA to out', elementId: 'select-sma-dca-to-out',  fmt: x => x === 0 ? 'instant' : `${x}mo`, kind: 'number' },
-  sbd: { label: 'Deleverage', elementId: 'select-sma-bg-delev',    fmt: x => x === 0 ? 'off' : `+${x}%`,    kind: 'number' },
-  sbg: { label: 'GTFO',       elementId: 'select-sma-bg-gtfo',     fmt: x => x === 0 ? 'off' : `+${x}%`,    kind: 'number' },
+  sbg: { label: 'Bubble→cash', elementId: 'select-sma-bg-gtfo',    fmt: x => x === 0 ? 'off' : `+${x}%`,    kind: 'number' },
+  sbga:{ label: 'Bubble ticker', elementId: 'select-sma-bg-asset', fmt: v => String(v).toUpperCase(),      kind: 'string' },
   nu: { label: 'Trades',     elementId: 'select-9sig-underlying',fmt: v => String(v).toUpperCase(), kind: 'string' },
   ng: { label: 'Signal +',   elementId: 'select-9sig-growth',    fmt: x => `${x}%`,                 kind: 'number' },
   nc: { label: '30-down',    elementId: 'select-9sig-crashdrop', fmt: x => x >= 100 ? 'off' : `-${x}%`, kind: 'number' },
@@ -1074,7 +1074,7 @@ const STRATEGY_METRIC_DEFS = {
 // raise / rate row still renders unconditionally).
 const STRATEGY_METRICS = {
   '9sig': ['nu', 'ng', 'np', 'nh', 'nr', 'nc', 'ncw', 'ns', 'nbp', 'npa'],
-  'sma':  ['su', 'sa', 'sw', 'scr', 'seb', 'sxb', 'sro', 'src', 'soa', 'sdi', 'sdo', 'sbd', 'sbg'],
+  'sma':  ['su', 'sa', 'sw', 'scr', 'seb', 'sxb', 'sro', 'src', 'soa', 'sdi', 'sdo', 'sbg', 'sbga'],
 };
 
 function metricSelect(key, label, current, fmt, dim) {
@@ -1324,7 +1324,7 @@ let _perYearSimsKey = null;
 function _underlyingAndGrowth() {
   const ulSel = (id) => {
     const v = (document.getElementById(id) || {}).value;
-    return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1;
+    return v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1;
   };
   const cd = +((document.getElementById('select-9sig-crashdrop') || {}).value);
   const cw = +((document.getElementById('select-9sig-crashwin')  || {}).value);
@@ -1374,8 +1374,9 @@ function _smaParamsForAnalytics() {
     outAsset:       ((document.getElementById('select-sma-out-asset') || {}).value) || 'cash',
     dcaInMonths:    +((document.getElementById('select-sma-dca-in')      || {}).value) || 0,
     dcaToOutMonths: +((document.getElementById('select-sma-dca-to-out')  || {}).value) || 0,
-    bgDelevPct:     +((document.getElementById('select-sma-bg-delev')    || {}).value) || 0,
     bgGtfoPct:      +((document.getElementById('select-sma-bg-gtfo')     || {}).value) || 0,
+    bgAsset:        ((document.getElementById('select-sma-bg-asset')     || {}).value) || 'qqq',
+    tradeCostPct:   +((document.getElementById('select-sma-cost')        || {}).value) || 0,
     rsiOhWindow:    +((document.getElementById('select-sma-rsi-oh-window')   || {}).value) || 10,
     rsiCoolWindow:  +((document.getElementById('select-sma-rsi-cool-window') || {}).value) || 10,
     rebalanceCheck: 'daily',
@@ -1416,7 +1417,7 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
   if (!cfg || typeof simulate !== 'function') return [];
   const p = cfg.params || {};
   const get = (typeof pget === 'function') ? pget : (pp, id, d) => (pp && id in pp) ? pp[id] : d;
-  const ul  = (typeof ulColFromVal === 'function') ? ulColFromVal : (v) => (v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1);
+  const ul  = (typeof ulColFromVal === 'function') ? ulColFromVal : (v) => (v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1);
   if (cfg.type === '9sig') {
     const cd = +get(p, 'select-9sig-crashdrop', 30), sp = +get(p, 'select-9sig-spike', 100);
     const opts = {
@@ -1448,8 +1449,9 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
       outAsset: get(p, 'select-sma-out-asset', 'cash') || 'cash',
       dcaInMonths: +get(p, 'select-sma-dca-in', 0) || 0,
       dcaToOutMonths: +get(p, 'select-sma-dca-to-out', 0) || 0,
-      bgDelevPct: +get(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +get(p, 'select-sma-bg-gtfo', 0) || 0,
+      bgAsset: get(p, 'select-sma-bg-asset', 'qqq') || 'qqq',
+      tradeCostPct: +get(p, 'select-sma-cost', 0) || 0,
       rsiOhWindow: +get(p, 'select-sma-rsi-oh-window', 10) || 10,
       rsiCoolWindow: +get(p, 'select-sma-rsi-cool-window', 10) || 10,
       rebalanceCheck: 'daily',

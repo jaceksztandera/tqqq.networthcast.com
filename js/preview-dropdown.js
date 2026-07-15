@@ -20,7 +20,7 @@
   //            (no per-option resim), so no `apply` is needed.
   const PREVIEW_SELECTS = {
     'select-9sig-cash':       { kind: '9sig', apply: (p, v) => { p.cashPct = (+v || 0) / 100; } },
-    'select-9sig-underlying': { kind: '9sig', apply: (p, v) => { p.underlyingCol = v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; } },
+    'select-9sig-underlying': { kind: '9sig', apply: (p, v) => { p.underlyingCol = v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; } },
     'select-9sig-cashrate':   { kind: '9sig', apply: (p, v) => { p.cashRate = (+v || 0) / 100; } },
     'select-9sig-period':     { kind: '9sig', apply: (p, v) => { p.rebalancePeriod = v; } },
     'select-9sig-growth':     { kind: '9sig', apply: (p, v) => { p.qGrowth = (+v || 0) / 100; } },
@@ -30,7 +30,7 @@
     'select-9sig-buypower':   { kind: '9sig', apply: (p, v) => { p.buyThrottlePct = +v; } },
     'select-9sig-park-asset': { kind: '9sig', apply: (p, v) => { p.parkAsset = v; } },
     'select-bh-underlying':   { kind: 'bh' },
-    'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; } },
+    'select-sma-underlying':  { kind: 'sma', apply: (p, v) => { p.underlyingCol = v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; } },
     'select-sma-asset':       { kind: 'sma', apply: (p, v) => { p.smaAsset = v; } },
     'select-sma-window':      { kind: 'sma', apply: (p, v) => { p.smaWindow = +v; } },
     'select-sma-cashrate':    { kind: 'sma', apply: (p, v) => { p.cashRate = (+v || 0) / 100; } },
@@ -41,8 +41,9 @@
     'select-sma-out-asset':   { kind: 'sma', apply: (p, v) => { p.outAsset = v; } },
     'select-sma-dca-in':      { kind: 'sma', apply: (p, v) => { p.dcaInMonths = +v; } },
     'select-sma-dca-to-out':  { kind: 'sma', apply: (p, v) => { p.dcaToOutMonths = +v; } },
-    'select-sma-bg-delev':    { kind: 'sma', apply: (p, v) => { p.bgDelevPct = +v; } },
     'select-sma-bg-gtfo':     { kind: 'sma', apply: (p, v) => { p.bgGtfoPct = +v; } },
+    'select-sma-bg-asset':    { kind: 'sma', apply: (p, v) => { p.bgAsset = v; } },
+    'select-sma-cost':        { kind: 'sma', apply: (p, v) => { p.tradeCostPct = +v; } },
     'select-sma-rsi-oh-window':   { kind: 'sma', apply: (p, v) => { p.rsiOhWindow = +v; } },
     'select-sma-rsi-cool-window': { kind: 'sma', apply: (p, v) => { p.rsiCoolWindow = +v; } },
     'select-sma-confirm-buy':     { kind: 'sma', apply: (p, v) => { p.confirmBuySteps = +v; } },
@@ -75,7 +76,7 @@
     return Object.assign(readBaseParams(), {
       baselineRate:  sliderToRate(+document.getElementById('slider-rate').value) / 100,
       cashRate:      _num('select-9sig-cashrate', 0) / 100,
-      underlyingCol: (function () { const v = _str('select-9sig-underlying', 'tqqq'); return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; })(),
+      underlyingCol: (function () { const v = _str('select-9sig-underlying', 'tqqq'); return v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; })(),
       qGrowth:       _num('select-9sig-growth', 9) / 100,
       crashDropPct:  _num('select-9sig-crashdrop', 30),
       crashLookbackMonths: _num('select-9sig-crashwin', 24),
@@ -92,7 +93,7 @@
   function readSmaParams() {
     return Object.assign(readBaseParams(), {
       cashRate:      _num('select-sma-cashrate', 0) / 100,
-      underlyingCol: (function () { const v = _str('select-sma-underlying', 'tqqq'); return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; })(),
+      underlyingCol: (function () { const v = _str('select-sma-underlying', 'tqqq'); return v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1; })(),
       smaAsset:      _str('select-sma-asset', 'qqq'),
       smaWindow:     _num('select-sma-window', 200),
       entryBufferPct: _num('select-sma-entry-buf', 0),
@@ -102,8 +103,9 @@
       outAsset: _str('select-sma-out-asset', 'cash'),
       dcaInMonths: _num('select-sma-dca-in', 0),
       dcaToOutMonths: _num('select-sma-dca-to-out', 0),
-      bgDelevPct: _num('select-sma-bg-delev', 0),
       bgGtfoPct:  _num('select-sma-bg-gtfo', 0),
+      bgAsset:    _str('select-sma-bg-asset', 'qqq'),
+      tradeCostPct: _num('select-sma-cost', 0),
       rsiOhWindow: _num('select-sma-rsi-oh-window', 10),
       rsiCoolWindow: _num('select-sma-rsi-cool-window', 10),
       rebalanceCheck: 'daily',
@@ -127,7 +129,7 @@
       entryBufferPct: p.entryBufferPct, exitBufferPct: p.exitBufferPct,
       rsiOverheatThreshold: p.rsiOverheatThreshold, rsiCoolThreshold: p.rsiCoolThreshold,
       outAsset: p.outAsset, dcaInMonths: p.dcaInMonths, dcaToOutMonths: p.dcaToOutMonths,
-      bgDelevPct: p.bgDelevPct, bgGtfoPct: p.bgGtfoPct,
+      bgGtfoPct: p.bgGtfoPct, bgAsset: p.bgAsset, tradeCostPct: p.tradeCostPct,
       rsiOhWindow: p.rsiOhWindow, rsiCoolWindow: p.rsiCoolWindow,
       rebalanceCheck: p.rebalanceCheck, confirmBuySteps: p.confirmBuySteps, confirmSellSteps: p.confirmSellSteps,
     });

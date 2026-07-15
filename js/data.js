@@ -413,7 +413,14 @@ function precomputeSMASeries() {
     const idx = dailyDateToIdx.get(date);
     return idx != null ? dailyArr[idx] : null;
   });
-  const seriesByAsset = { qqq: daily.map(d => d.qqq), spy: daily.map(d => d.spy) };
+  // All six tradeable series get a lazy SMA/RSI source, so the SMA signal (QQQ/
+  // SPY) AND the bubble-insurance gauge (any ticker the user picks) can be
+  // measured against their own moving average. Nothing is computed until read.
+  const seriesByAsset = {
+    qqq:  daily.map(d => d.qqq),  spy:  daily.map(d => d.spy),
+    tqqq: daily.map(d => d.tqqq), qld:  daily.map(d => d.qld),
+    sso:  daily.map(d => d.sso),  spxl: daily.map(d => d.spxl),
+  };
 
   const sma = makeLazyIndicator(seriesByAsset, toMonthly, rollingSMA);
   smaAtDailyByKey = sma.daily; smaAtMonthlyByKey = sma.monthly;

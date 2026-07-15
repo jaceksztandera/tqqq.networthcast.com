@@ -3,6 +3,96 @@ let chart = null;
 // Populated on every render(); cleared when there's not enough data to sim.
 let _logData = null;
 
+// ── SMA action markers ────────────────────────────────────────────────────
+// Symbols drawn on the SMA line at each real trade (not money-in events).
+// Each event type gets its own shape + colour so they're tellable apart, and
+// hovering one shows the trade detail. `_smaMarkers` caches on-screen hit-boxes.
+const SMA_EVENT_STYLE = {
+  ENTER:      { color: '#4ade80', shape: 'triUp',   label: 'Buy' },
+  EXIT:       { color: '#f87171', shape: 'triDown', label: 'Sell' },
+  'BG-GTFO':  { color: '#fbbf24', shape: 'diamond', label: 'Bubble → cash' },
+  'BG-CLEAR': { color: '#38bdf8', shape: 'square',  label: 'Bubble over' },
+};
+let _smaMarkers = [];
+let _smaHoverKey = null;
+
+// Hover hit-test for the SMA markers: on mousemove over the canvas, find the
+// nearest marker within a small radius and show/refresh its detail tooltip.
+// Runs alongside Chart.js's own line tooltip; the marker tooltip is anchored
+// right at the symbol so the two read as separate things.
+function handleSmaMarkerHover(e) {
+  const tt = document.getElementById('marker-tooltip');
+  if (!tt || !chart) return;
+  const canvas = chart.canvas;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let hit = null, best = 11;
+  for (const m of _smaMarkers) {
+    const d = Math.hypot(mx - m.x, my - m.y);
+    if (d < best) { best = d; hit = m; }
+  }
+  const newKey = hit ? hit.key : null;
+  if (newKey !== _smaHoverKey) {
+    _smaHoverKey = newKey;
+    if (chart.draw) chart.draw(); // redraw to grow the hovered symbol
+  }
+  if (hit) {
+    tt.innerHTML = smaMarkerTooltipHtml(hit);
+    tt.style.display = 'block';
+    // Position above the marker, clamped to the viewport.
+    const tw = tt.offsetWidth || 180, th = tt.offsetHeight || 80;
+    let left = rect.left + hit.x - tw / 2;
+    left = Math.max(8, Math.min(window.innerWidth - tw - 8, left));
+    let top = rect.top + hit.y - th - 12;
+    if (top < 8) top = rect.top + hit.y + 14;
+    tt.style.left = left + 'px';
+    tt.style.top = top + 'px';
+  } else {
+    tt.style.display = 'none';
+  }
+}
+
+function drawSmaMarker(cx, x, y, style, hovered) {
+  const r = hovered ? 7 : 5;
+  cx.beginPath();
+  switch (style.shape) {
+    case 'triUp':   cx.moveTo(x, y - r); cx.lineTo(x - r, y + r * 0.85); cx.lineTo(x + r, y + r * 0.85); cx.closePath(); break;
+    case 'triDown': cx.moveTo(x, y + r); cx.lineTo(x - r, y - r * 0.85); cx.lineTo(x + r, y - r * 0.85); cx.closePath(); break;
+    case 'diamond': cx.moveTo(x, y - r); cx.lineTo(x + r, y); cx.lineTo(x, y + r); cx.lineTo(x - r, y); cx.closePath(); break;
+    case 'square':  cx.rect(x - r * 0.8, y - r * 0.8, r * 1.6, r * 1.6); break;
+    default:        cx.arc(x, y, r, 0, Math.PI * 2);
+  }
+  cx.fillStyle = style.color;
+  cx.lineWidth = hovered ? 2 : 1.5;
+  cx.strokeStyle = hovered ? '#fff' : 'rgba(10,14,23,0.85)';
+  cx.fill();
+  cx.stroke();
+}
+
+function smaMarkerLabel(ev, ulName) {
+  const st = SMA_EVENT_STYLE[ev.action];
+  if (!st) return ev.action;
+  if (ev.action === 'ENTER') return 'Buy ' + ulName;
+  if (ev.action === 'EXIT')  return 'Sell ' + ulName;
+  return st.label;
+}
+
+function smaMarkerTooltipHtml(m) {
+  const ev = m.ev, st = m.st;
+  const held = (ev.held || ev.state || '').toString().toUpperCase();
+  const price = (typeof fmtLogPrice === 'function') ? fmtLogPrice(ev.price) : ('$' + ev.price);
+  return `
+    <div class="mt-head" style="color:${st.color}">
+      <span class="mt-dot" style="background:${st.color}"></span>${smaMarkerLabel(ev, m.ulName)}
+    </div>
+    <div class="mt-date">${(typeof fmtLogDate === 'function') ? fmtLogDate(ev.date) : ev.date}</div>
+    <div class="mt-grid">
+      <span>Holding</span><b>${held}</b>
+      <span>Price</span><b>${price}</b>
+      <span>Portfolio</span><b>${fmtFull(Math.round(ev.total))}</b>
+    </div>`;
+}
+
 // Build the compact legend chips that sit above the chart. Each chip
 // combines an eye-toggle, color dot, dataset name, and (when available)
 // the strategy's annualized CAGR. Click toggles dataset visibility, which
@@ -167,6 +257,119 @@ function buildNineSigRulesHtml() {
   `;
 }
 
+// Inline icon set (Feather-style, stroke = currentColor) for the metric cards.
+const STAT_ICONS = {
+  trendUp:   '<path d="M22 7l-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+  trendDown: '<path d="M22 17l-8.5-8.5-5 5L2 7"/><path d="M16 17h6v-6"/>',
+  dollar:    '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  flag:      '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+  clock:     '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  sliders:   '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  activity:  '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  shield:    '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+};
+function statIcon(name) {
+  return `<span class="strategy-stat-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${STAT_ICONS[name] || ''}</svg></span>`;
+}
+// One metric card: icon + label head, big value, optional sub-line. `tip`
+// adds a hover-info (?) next to the label using the shared .info-icon tooltip.
+function statCard(label, icon, value, valueCls, sub, tip) {
+  const info = tip ? ` <span class="info-icon" tabindex="0" data-tip="${tip}">ⓘ</span>` : '';
+  return `<div class="strategy-stat">
+      <div class="strategy-stat-head"><span class="strategy-stat-label">${label}${info}</span>${statIcon(icon)}</div>
+      <div class="strategy-stat-value ${valueCls || ''}">${value}</div>
+      ${sub ? `<div class="strategy-stat-range">${sub}</div>` : ''}
+    </div>`;
+}
+
+// Live signal dashboard for the SMA strategy — reads the current control
+// values and reports where the signal stands as of the most recent trading
+// day: the signal asset vs its moving average, how long it's been on that
+// side, the RSI gauges, and the bubble-insurance gauge. Recomputed whenever the
+// SMA panel re-renders, so it tracks whatever knobs the user is turning.
+function buildSignalMetricsHtml() {
+  if (typeof daily === 'undefined' || !daily || !daily.length) return '';
+  if (typeof smaAtDailyByKey === 'undefined' || !smaAtDailyByKey) return '';
+  const g = (id) => (document.getElementById(id) || {}).value;
+  const smaAsset = (g('select-sma-asset') || 'qqq').toLowerCase();
+  const win      = +g('select-sma-window') || 200;
+  const ohWin    = +g('select-sma-rsi-oh-window') || 10;
+  const coolWin  = +g('select-sma-rsi-cool-window') || 10;
+  const rsiOh    = +g('select-sma-rsi-oh') || 0;
+  const rsiCool  = +g('select-sma-rsi-cool') || 0;
+  const bgAsset  = (g('select-sma-bg-asset') || 'qqq').toLowerCase();
+  const bgGtfo   = +g('select-sma-bg-gtfo') || 0;
+  const entryBuf = +g('select-sma-entry-buf') || 0;
+  const exitBuf  = +g('select-sma-exit-buf') || 0;
+
+  const di = daily.length - 1;
+  const dateStr = daily[di].date;
+  const smaArr = smaAtDailyByKey[smaAsset + '_' + win];
+  if (!smaArr || smaArr[di] == null) return '';
+  const price = daily[di][smaAsset];
+  const sma   = smaArr[di];
+  const pct   = (price / sma - 1) * 100;
+  const above = price > sma;
+  // Consecutive trading days the signal asset has been on its current side.
+  let days = 0;
+  for (let j = di; j >= 0; j--) {
+    const s = smaArr[j]; if (s == null) break;
+    if ((daily[j][smaAsset] > s) === above) days++; else break;
+  }
+  // Entry/exit buffer bands — how far the price still is from the trigger.
+  const enterAt = sma * (1 + entryBuf / 100);
+  const exitAt  = sma * (1 - exitBuf / 100);
+
+  const AN = smaAsset.toUpperCase();
+  const red = (t) => `<span style="color:var(--red)">${t}</span>`;
+
+  const rsiCard = (label, w, thr, cmp, tip) => {
+    const arr = (typeof rsiAtDailyByKey !== 'undefined' && rsiAtDailyByKey) ? rsiAtDailyByKey[smaAsset + '_' + w] : null;
+    const v = arr && arr[di] != null ? arr[di] : null;
+    const vStr = v == null ? '—' : v.toFixed(1);
+    let sub;
+    if (thr <= 0) sub = 'off';
+    else if (v == null) sub = '';
+    else { const hit = cmp === 'above' ? v >= thr : v <= thr; sub = hit ? red(`${cmp} ${thr} · hit`) : `${cmp} ${thr}`; }
+    return statCard(`RSI(${w}) · ${label}`, 'activity', vStr, '', sub, tip);
+  };
+
+  const cards = [];
+  cards.push(statCard(`${AN} vs ${win}-day avg`, above ? 'trendUp' : 'trendDown',
+    `${above ? '▲' : '▼'} ${above ? '+' : '−'}${Math.abs(pct).toFixed(2)}%`,
+    above ? 'positive' : 'negative',
+    `${fmtLogPrice(price)} vs ${fmtLogPrice(sma)} avg`,
+    `The signal ticker's latest close vs its ${win}-day moving average.&#10;&#10;Above the average = the trend rule leans IN (hold the 3× fund); below = OUT. This is the core buy/sell signal.`));
+  cards.push(statCard(`Days ${above ? 'above' : 'below'} avg`, 'clock', String(days), '',
+    `since ${AN} last crossed`,
+    `How many trading days in a row ${AN} has stayed on its current side of the moving average — i.e. how long the current trend signal has held without flipping.`));
+  if (entryBuf > 0 || exitBuf > 0) cards.push(statCard('Buffer bands', 'sliders',
+    `+${entryBuf}% / −${exitBuf}%`, '',
+    `buy &gt; ${fmtLogPrice(enterAt)} · sell &lt; ${fmtLogPrice(exitAt)}`,
+    `The price gates your buffers create: you only BUY once price is ${entryBuf}% above the average, and only SELL once it is ${exitBuf}% below. This dead-zone stops flip-flopping right at the line.`));
+  cards.push(rsiCard('sell', ohWin, rsiOh, 'above',
+    `Relative Strength Index over ${ohWin} days on ${AN} — a 0–100 momentum gauge.&#10;&#10;How it's calculated:&#10;1. Each day, take the close-to-close change; split into up moves and down moves.&#10;2. Keep a ${ohWin}-day average of each, Wilder-smoothed: newAvg = (prevAvg × ${ohWin - 1} + today) ÷ ${ohWin}.&#10;3. RS = avg gain ÷ avg loss.&#10;4. RSI = 100 − 100 ÷ (1 + RS).&#10;&#10;50 = ups & downs balanced · above ~70 = ran up fast · below ~30 = sold off hard.&#10;&#10;Sell rule: exit when RSI climbs above your overheat level${rsiOh > 0 ? ` (${rsiOh})` : ''}.`));
+  cards.push(rsiCard('buy', coolWin, rsiCool, 'below',
+    `Relative Strength Index over ${coolWin} days on ${AN} — a 0–100 momentum gauge.&#10;&#10;How it's calculated:&#10;1. Each day, take the close-to-close change; split into up moves and down moves.&#10;2. Keep a ${coolWin}-day average of each, Wilder-smoothed: newAvg = (prevAvg × ${coolWin - 1} + today) ÷ ${coolWin}.&#10;3. RS = avg gain ÷ avg loss.&#10;4. RSI = 100 − 100 ÷ (1 + RS).&#10;&#10;50 = balanced · above ~70 = overbought · below ~30 = oversold.&#10;&#10;Buy rule: wait until RSI cools below your level${rsiCool > 0 ? ` (${rsiCool})` : ''} before re-entering, so you don't buy an overheated top.`));
+
+  const bgArr = smaAtDailyByKey[bgAsset + '_' + win];
+  if (bgArr && bgArr[di] != null) {
+    const bp = daily[di][bgAsset], bs = bgArr[di];
+    const babove = (bp / bs - 1) * 100;
+    const armed = bgGtfo > 0 && babove >= bgGtfo;
+    const sub = armed ? red('⚠ armed — would sell to cash')
+              : (bgGtfo > 0 ? `to cash at +${bgGtfo}%` : 'off');
+    cards.push(statCard(`${bgAsset.toUpperCase()} vs ${win}-day avg`, 'shield',
+      `${babove >= 0 ? '+' : '−'}${Math.abs(babove).toFixed(2)}%`,
+      armed ? 'negative' : (babove >= 0 ? 'positive' : 'negative'), sub,
+      `The bubble-insurance gauge: how far ${bgAsset.toUpperCase()} sits above its own ${win}-day average.&#10;&#10;${bgGtfo > 0 ? `When it reaches +${bgGtfo}%, the brake sells everything to cash — no matter what the main signal says.` : 'The brake is off (no cash trigger set).'}`));
+  }
+
+  return `
+    <div class="strategy-panel-section-label" style="margin-top:24px">Signal metrics <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">· as of ${fmtLogDate(dateStr)}</span></div>
+    <div class="strategy-stats">${cards.join('')}</div>`;
+}
+
 // Event-driven log table for the SMA strategy. Shows one row per actual
 // trade (ENTER / EXIT) — not one row per quarter — because SMA only does
 // something when the signal flips. Most quarters would just be noise.
@@ -174,14 +377,40 @@ function buildSmaLogTableHtml(smaLog) {
   if (!smaLog || smaLog.length === 0) return '';
   // The leveraged ETF the SMA strategy holds when "in" (TQQQ).
   const ulName = ((document.getElementById('select-sma-underlying') || {}).value || 'tqqq').toUpperCase();
-  const rows = smaLog.map(l => {
-    const ac = l.action === 'EXIT'  ? 'action-sell'
+  // Plain-English labels for the internal action codes (kept as-is in the data
+  // for styling/tests). "BG-*" = the bubble-insurance brake firing.
+  const LABEL = {
+    START: 'Start',
+    ENTER: 'Buy ' + ulName,
+    EXIT:  'Sell ' + ulName,
+    'BG-GTFO':  'Bubble → cash',   // sell everything to cash
+    'BG-CLEAR': 'Bubble over',     // brake released, back to normal
+    'END':      'End of range',    // final snapshot — matches the chart endpoint
+  };
+  const rows = smaLog.map((l, i) => {
+    const ac = (l.action === 'EXIT' || l.action === 'BG-GTFO') ? 'action-sell'
              : l.action === 'ENTER' ? 'action-buy'
              : 'action-hold';
+    // Contribution rows carry their amount; label them "+ $X" (money in).
+    const actionLabel = l.action === 'CONTRIB'
+      ? '+ ' + fmtFull(Math.round(l.contribAmt || 0))
+      : (LABEL[l.action] || l.action);
+    // Gain since the previous action: how much the portfolio grew/shrank over
+    // the stretch you held that position, with any contributions added in
+    // between removed so it reflects the holding's own return, not new money.
+    let gainCell = '';
+    const prev = i > 0 ? smaLog[i - 1] : null;
+    if (prev && prev.total > 0) {
+      const contrib = (l.invested || 0) - (prev.invested || 0);
+      const g = (l.total - prev.total - contrib) / prev.total * 100;
+      const gc = g >= 0 ? 'action-buy' : 'action-sell';
+      gainCell = ` <span class="${gc}">(${g >= 0 ? '+' : '−'}${Math.abs(g).toFixed(1)}%)</span>`;
+    }
     return `<tr>
+      <td>${i}</td>
       <td>${fmtLogDate(l.date)}</td>
-      <td class="${ac}">${l.action}</td>
-      <td>${l.state.toUpperCase()}</td>
+      <td class="${ac}">${actionLabel}${gainCell}</td>
+      <td>${(l.held || l.state).toUpperCase()}</td>
       <td>${fmtLogPrice(l.price)}</td>
       <td>${fmtLogShares(l.shares)}</td>
       <td>${fmtFull(Math.round(l.stockVal))}</td>
@@ -193,21 +422,22 @@ function buildSmaLogTableHtml(smaLog) {
   return `
     <div class="strategy-panel-section-label" style="margin-top:24px">SMA Transaction Log</div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">
-      One row per actual trade. ${smaLog.length} event${smaLog.length===1?'':'s'} over this window.
+      One row per trade or monthly contribution. ${smaLog.length} event${smaLog.length===1?'':'s'} over this window.
     </div>
     <div class="quarter-table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Action</th>
-            <th>State</th>
-            <th>${ulName} Price</th>
-            <th>${ulName} Shares</th>
-            <th>Stock Val</th>
-            <th>Cash</th>
-            <th>Total</th>
-            <th>Invested</th>
+            <th># <span class="info-icon" tabindex="0" data-tip="Event number. Start is 0 (your opening position), then each row — every trade and every monthly contribution — counts up, so the last number is the total number of events over this window.">ⓘ</span></th>
+            <th>Date <span class="info-icon" tabindex="0" data-tip="The trading day this row happened on.&#10;&#10;The log only lists days the strategy actually did something — most days it just holds and aren't shown.">ⓘ</span></th>
+            <th>Action <span class="info-icon" tabindex="0" data-tip="What the strategy did on this day:&#10;&#10;• Start — your very first position&#10;• Buy ${ulName} / Sell ${ulName} — the trend signal moved you into or out of the 3× fund&#10;• + $X — a monthly contribution went in&#10;• Bubble → cash — the bubble brake sold everything to cash&#10;• Bubble over — the brake let go; the trend signal is back in charge&#10;• End of range — a final snapshot at the end of your dates (no trade); its Total matches the chart's endpoint&#10;&#10;The (%) in brackets is the gain or loss since the PREVIOUS action — how much the position you were holding earned over that stretch. Contributions added in between are removed, so it's the holding's own return: green for up, red for down.">ⓘ</span></th>
+            <th>Holding <span class="info-icon" tabindex="0" data-tip="What you actually owned right after this trade:&#10;&#10;• ${ulName} — the 3× fund, fully invested&#10;• QQQ / SPY — a plain, un-leveraged fund (much safer)&#10;• CASH — sitting out of the market&#10;&#10;This can differ from the trend signal: when the bubble brake fires, the trend may still say 'in' while you're actually parked in cash.">ⓘ</span></th>
+            <th>${ulName} Price <span class="info-icon" tabindex="0" data-tip="The closing price of ${ulName} (the 3× fund) on this day.">ⓘ</span></th>
+            <th>${ulName} Shares <span class="info-icon" tabindex="0" data-tip="How many shares of ${ulName} you held after this trade.&#10;&#10;0 means you were in cash or a plain fund instead — so this column reads 0 on every bubble-brake and sell row.">ⓘ</span></th>
+            <th>Stock Val <span class="info-icon" tabindex="0" data-tip="The dollar value of whatever fund you were holding at this point — everything in the portfolio except cash.">ⓘ</span></th>
+            <th>Cash <span class="info-icon" tabindex="0" data-tip="How much was sitting in cash after this trade, earning the cash interest rate until it's put back to work.">ⓘ</span></th>
+            <th>Total <span class="info-icon" tabindex="0" data-tip="Your entire portfolio value that day: fund value + cash. This is the number the strategy's line plots on the chart.">ⓘ</span></th>
+            <th>Invested <span class="info-icon" tabindex="0" data-tip="Total money you had put in by this date — your starting amount plus every contribution so far.&#10;&#10;Total minus Invested is your profit.">ⓘ</span></th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -257,6 +487,7 @@ function buildSimpleLogTableHtml(title, log, valueAt, typeFor) {
   const nm = newMoneyPerPeriod(log);
   const last = log.length - 1;
   const rows = log.map((l, i) => `<tr${i === last ? ' class="log-latest"' : ''}>
+      <td>${i}</td>
       <td>${fmtLogDate(l.date)}</td>
       <td>${typeFor(i, nm[i])}${latestBadge(i === last)}</td>
       <td>${nm[i] > 0 ? fmtFull(Math.round(nm[i])) : '—'}</td>
@@ -266,7 +497,7 @@ function buildSimpleLogTableHtml(title, log, valueAt, typeFor) {
     <div class="strategy-panel-section-label" style="margin-top:24px">${title}</div>
     <div class="quarter-table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Type</th><th>New $</th><th>Value</th></tr></thead>
+        <thead><tr><th># <span class="info-icon" tabindex="0" data-tip="Row number — the first row is 0, then each counts up.">ⓘ</span></th><th>Date</th><th>Type</th><th>New $</th><th>Value</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -290,6 +521,7 @@ function buildBuyHoldLogTableHtml(title, log, series, ulName) {
                : hasContrib ? (nm[i] > 0 ? 'Monthly investment' : 'Hold')
                : 'Latest';
     return `<tr${i === last ? ' class="log-latest"' : ''}>
+      <td>${i}</td>
       <td>${fmtLogDate(log[i].date)}</td>
       <td>${type}${latestBadge(i === last)}</td>
       <td>${nm[i] > 0 ? fmtFull(Math.round(nm[i])) : '—'}</td>
@@ -302,7 +534,7 @@ function buildBuyHoldLogTableHtml(title, log, series, ulName) {
     <div class="strategy-panel-section-label" style="margin-top:24px">${title}</div>
     <div class="quarter-table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Type</th><th>New $</th><th>${ulName} Price</th><th>${ulName} Shares</th><th>Value</th></tr></thead>
+        <thead><tr><th># <span class="info-icon" tabindex="0" data-tip="Row number in the full price history (the initial buy is 0). When there are no contributions the table collapses to just the first and last rows, so the numbers can jump.">ⓘ</span></th><th>Date</th><th>Type</th><th>New $</th><th>${ulName} Price</th><th>${ulName} Shares</th><th>Value</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -322,6 +554,7 @@ function buildLogTableHtml(d) {
     const shares = l.price > 0 ? l.tqqqVal / l.price : 0;
     const type = i === 0 ? 'Initial' : 'Rebalance';
     return `<tr${i === lastIdx ? ' class="log-latest"' : ''}>
+      <td>${i}</td>
       <td>${fmtLogDate(l.date)}</td>
       <td>${type}${latestBadge(i === lastIdx)}</td>
       <td>${nm[i] > 0 ? fmtFull(Math.round(nm[i])) : '—'}</td>
@@ -340,6 +573,7 @@ function buildLogTableHtml(d) {
       <table>
         <thead>
           <tr>
+            <th># <span class="info-icon" tabindex="0" data-tip="Row number. The initial position is 0, then each rebalance counts up — so the last number is the total number of rebalances.">ⓘ</span></th>
             <th>Date</th>
             <th>Type</th>
             <th>New $</th>
@@ -383,23 +617,14 @@ function renderStatsGrid(idx) {
   const ddRangeHtml = ddRange ? `<div class="strategy-stat-range">${ddRange}</div>` : '';
   return `
     <div class="strategy-stats">
-      <div class="strategy-stat">
-        <div class="strategy-stat-label">CAGR</div>
-        <div class="strategy-stat-value ${cagrCls}">${cagrStr}</div>
-      </div>
-      <div class="strategy-stat">
-        <div class="strategy-stat-label">Starting Balance</div>
-        <div class="strategy-stat-value">${fmtFull(Math.round(m.start))}</div>
-      </div>
-      <div class="strategy-stat">
-        <div class="strategy-stat-label">Ending Balance</div>
-        <div class="strategy-stat-value">${fmtFull(Math.round(m.end))}</div>
-      </div>
-      <div class="strategy-stat">
-        <div class="strategy-stat-label">Max Drawdown</div>
-        <div class="strategy-stat-value negative">${ddStr}</div>
-        ${ddRangeHtml}
-      </div>
+      ${statCard('CAGR', m.cagr >= 0 ? 'trendUp' : 'trendDown', cagrStr, cagrCls, '',
+        'Money-weighted annual growth rate (IRR).&#10;&#10;Each contributed dollar is weighted by how long it was actually invested, so early money counts for more than a simple end÷start rate would give.')}
+      ${statCard('Starting Balance', 'dollar', fmtFull(Math.round(m.start)), '', '',
+        'Your position value at the start of the selected date range — the initial amount put to work here.')}
+      ${statCard('Ending Balance', 'flag', fmtFull(Math.round(m.end)), '', '',
+        'Portfolio value at the end of the selected date range. This is where the strategy line lands on the chart.')}
+      ${statCard('Max Drawdown', 'trendDown', ddStr, 'negative', ddRange || '',
+        'The worst peak-to-trough drop over the range, revalued at every daily close (so intra-quarter crashes count). The dates below show when it happened.')}
     </div>
   `;
 }
@@ -522,9 +747,10 @@ function renderStrategyPanelBody(idx) {
       (i) => _logData.log[i].investedCompounded,
       (i, m) => i === 0 ? 'Initial' : (m > 0 ? 'Monthly investment' : 'Interest'));
   }
-  // SMA-specific content: event-driven transaction log.
-  if (idx === 8 && _logData && _logData.smaLog) {
-    html += buildSmaLogTableHtml(_logData.smaLog);
+  // SMA-specific content: live signal dashboard + event-driven transaction log.
+  if (idx === 8) {
+    html += buildSignalMetricsHtml();
+    if (_logData && _logData.smaLog) html += buildSmaLogTableHtml(_logData.smaLog);
   }
   body.innerHTML = html;
   // Re-attach live control nodes for this idx (if any). Configuration
@@ -555,6 +781,55 @@ function renderStrategyPanelBody(idx) {
 // Strategy detail side panel — opens when a legend chip's more-button is
 // clicked. Title is the strategy name; body shows nested chips for any
 // sub-series defined in SUB_LEGEND (e.g. 9sig's TQQQ holding/target/cash).
+// ── Detail-panel emphasis ─────────────────────────────────────────────────
+// When a strategy's detail sidebar is open, make its line stand out: double its
+// stroke width and dim every OTHER line to 50% opacity. Dimming the border
+// colour also dims that line's endpoint dot + label (they read borderColor).
+function withAlpha(color, a) {
+  if (typeof color !== 'string') return color;
+  if (color[0] === '#') {
+    let h = color.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  const m = color.match(/rgba?\(([^)]+)\)/);
+  if (m) { const p = m[1].split(',').map(s => s.trim()); return `rgba(${p[0]},${p[1]},${p[2]},${a})`; }
+  return color;
+}
+// Which dataset does the open detail panel belong to? -1 = no panel open.
+function activePanelDatasetIdx() {
+  if (!chart || !chart.data) return -1;
+  if (typeof _currentPanelIdx !== 'undefined' && _currentPanelIdx != null) return _currentPanelIdx;
+  const cid = window._openCustomCfgId;
+  if (cid) return chart.data.datasets.findIndex(d => d && d._configId === cid);
+  return -1;
+}
+function applyPanelEmphasis(doUpdate) {
+  if (!chart || !chart.data) return;
+  const ds = chart.data.datasets;
+  const activeIdx = activePanelDatasetIdx();
+  const active = activeIdx >= 0;
+  ds.forEach((d, i) => {
+    if (!d) return;
+    // Refresh the canonical colour whenever the line isn't currently dimmed, so
+    // line-colour overrides get picked up. Width isn't touched elsewhere, so
+    // capture it just once.
+    if (!d._emphDimmed && typeof d.borderColor === 'string') d._emphBaseC = d.borderColor;
+    if (d._emphBaseW == null) d._emphBaseW = (d.borderWidth != null ? d.borderWidth : 1);
+    const isActive = active && i === activeIdx;
+    const isDim = active && !isActive;
+    // The SMA line (idx 8), when it's the open panel, is fully replaced by the
+    // detailed quarter+transaction overlay drawn in the marker plugin — so hide
+    // its coarse smooth Chart.js line (0 width). The overlay draws at 2× itself.
+    const hideCoarseSma = isActive && i === 8;
+    d.borderWidth = hideCoarseSma ? 0 : (isActive ? d._emphBaseW * 2 : d._emphBaseW);
+    if (d._emphBaseC) d.borderColor = isDim ? withAlpha(d._emphBaseC, 0.5) : d._emphBaseC;
+    d._emphDimmed = isDim;
+  });
+  if (doUpdate !== false && chart.update) chart.update('none');
+}
+
 function openStrategyPanel(idx) {
   const panel = document.getElementById('strategy-panel');
   const title = document.getElementById('strategy-panel-title');
@@ -566,6 +841,7 @@ function openStrategyPanel(idx) {
   renderStrategyPanelBody(idx);
   panel.classList.add('is-open');
   panel.setAttribute('aria-hidden', 'false');
+  applyPanelEmphasis();
 }
 // Open the custom-strategy editor panel (code + generated controls + log).
 function openCustomPanel(cfgId) {
@@ -580,6 +856,7 @@ function openCustomPanel(cfgId) {
   if (typeof renderCustomPanelBody === 'function') renderCustomPanelBody(cfgId);
   panel.classList.add('is-open');
   panel.setAttribute('aria-hidden', 'false');
+  applyPanelEmphasis();
 }
 function closeStrategyPanel() {
   const panel = document.getElementById('strategy-panel');
@@ -597,6 +874,7 @@ function closeStrategyPanel() {
   panel.classList.remove('is-open');
   panel.setAttribute('aria-hidden', 'true');
   if (openKey && typeof render === 'function') render();
+  applyPanelEmphasis(); // restore all lines to full width/opacity
 }
 // Gated close: when a BASE panel has edits that differ from canonical defaults,
 // closing would silently reset them — so warn first. Editing a saved strategy
@@ -882,7 +1160,7 @@ function render() {
   // Column index in quarterlyData: 1=TQQQ, 4=QLD, 5=SSO, 6=SPXL.
   const ulSel = (id) => {
     const v = (document.getElementById(id) || {}).value;
-    return v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1;
+    return v === 'qqq' ? 2 : v === 'spy' ? 3 : v === 'qld' ? 4 : v === 'sso' ? 5 : v === 'spxl' ? 6 : 1;
   };
   const sigUlCol = ulSel('select-9sig-underlying');
   const smaUlCol = ulSel('select-sma-underlying');
@@ -969,8 +1247,9 @@ function render() {
     outAsset:       ((document.getElementById('select-sma-out-asset') || {}).value) || 'cash',
     dcaInMonths:    +((document.getElementById('select-sma-dca-in')      || {}).value) || 0,
     dcaToOutMonths: +((document.getElementById('select-sma-dca-to-out')  || {}).value) || 0,
-    bgDelevPct:     +((document.getElementById('select-sma-bg-delev')    || {}).value) || 0,
     bgGtfoPct:      +((document.getElementById('select-sma-bg-gtfo')     || {}).value) || 0,
+    bgAsset:        ((document.getElementById('select-sma-bg-asset')     || {}).value) || 'qqq',
+    tradeCostPct:   +((document.getElementById('select-sma-cost')        || {}).value) || 0,
     rsiOhWindow:    +((document.getElementById('select-sma-rsi-oh-window')   || {}).value) || 10,
     rsiCoolWindow:  +((document.getElementById('select-sma-rsi-cool-window') || {}).value) || 10,
     rebalanceCheck: 'daily',
@@ -1257,6 +1536,7 @@ function render() {
     // dropped (log of 0 is undefined) — the dynamic min then includes them.
     chart.options.scales.y.min = logScale ? undefined : 0;
     clampChartMin(chart);
+    applyPanelEmphasis(false); // keep the open panel's line emphasized across re-renders
     chart.update('none');
   } else {
   const ctx = document.getElementById('mainChart').getContext('2d');
@@ -1431,7 +1711,9 @@ function render() {
 
       cx.save();
       const x = area.right + 8;
+      const activeI = activePanelDatasetIdx(); // -1 when no detail panel is open
       items.forEach(it => {
+        const isActive = it.i === activeI;
         // Connector line from chart edge to label
         cx.beginPath();
         cx.strokeStyle = it.color;
@@ -1444,9 +1726,9 @@ function render() {
         cx.stroke();
         cx.setLineDash([]);
 
-        // Small dot at line end
+        // Dot at line end — the emphasized strategy gets a bigger one.
         cx.beginPath();
-        cx.arc(area.right, origY, 3, 0, Math.PI * 2);
+        cx.arc(area.right, origY, isActive ? 5 : 3, 0, Math.PI * 2);
         cx.fillStyle = it.color;
         cx.fill();
 
@@ -1468,9 +1750,78 @@ function render() {
     }
   };
 
+  // Draw the SMA action markers on top of the line, and cache their hit-boxes
+  // for hover. Positioned by interpolating each event's date between the two
+  // category labels that bracket it (x) and its portfolio value (y).
+  const smaMarkerPlugin = {
+    id: 'smaMarkers',
+    afterDatasetsDraw(c) {
+      _smaMarkers = [];
+      const SMA_IDX = 8;
+      // Markers + detailed line only appear while the SMA detail panel is open.
+      if (activePanelDatasetIdx() !== SMA_IDX) return;
+      if (!c.isDatasetVisible || !c.isDatasetVisible(SMA_IDX)) return;
+      const log = _logData && _logData.smaLog;
+      const labs = c.data.labels;
+      if (!log || !log.length || !labs || !labs.length) return;
+      const xs = c.scales.x, ys = c.scales.y, area = c.chartArea;
+      const ulName = ((document.getElementById('select-sma-underlying') || {}).value || 'tqqq').toUpperCase();
+      const xForDate = (date) => {
+        let i = 0;
+        while (i + 1 < labs.length && labs[i + 1] <= date) i++;
+        if (i >= labs.length - 1) return xs.getPixelForValue(labs.length - 1);
+        const x0 = xs.getPixelForValue(i), x1 = xs.getPixelForValue(i + 1);
+        const t0 = Date.parse(labs[i]), t1 = Date.parse(labs[i + 1]), t = Date.parse(date);
+        const frac = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+        return x0 + (x1 - x0) * Math.max(0, Math.min(1, frac));
+      };
+      const cx = c.ctx;
+      cx.save();
+
+      // When the SMA panel is open, overlay a DETAILED line that threads through
+      // the quarterly points AND every logged event (trades, contributions, the
+      // end snapshot). The base Chart.js line only has quarter-grain points, so
+      // between quarters it draws straight; this shows the real transaction-level
+      // kinks. Drawn in the SMA line's own colour/width so it reads as the line.
+      if (activePanelDatasetIdx() === SMA_IDX && c.data.datasets[SMA_IDX]) {
+        const smaDs = c.data.datasets[SMA_IDX];
+        const arr = smaDs.data || [];
+        const pts = [];
+        for (let i = 0; i < labs.length; i++) if (arr[i] != null) pts.push({ x: xs.getPixelForValue(i), v: arr[i] });
+        for (const ev of log) if (ev.total > 0) pts.push({ x: xForDate(ev.date), v: ev.total });
+        pts.sort((a, b) => a.x - b.x);
+        if (pts.length > 1) {
+          cx.beginPath();
+          cx.moveTo(pts[0].x, ys.getPixelForValue(pts[0].v));
+          for (let k = 1; k < pts.length; k++) cx.lineTo(pts[k].x, ys.getPixelForValue(pts[k].v));
+          cx.strokeStyle = (typeof smaDs.borderColor === 'string' ? smaDs.borderColor : '#f472b6');
+          // Coarse line is hidden (width 0 while this panel is open), so size the
+          // overlay from the stored base width at the same 2× emphasis.
+          cx.lineWidth = (smaDs._emphBaseW || 2) * 2;
+          cx.lineJoin = 'round';
+          cx.stroke();
+        }
+      }
+
+      const hoveredKey = _smaHoverKey;
+      for (const ev of log) {
+        const st = SMA_EVENT_STYLE[ev.action];
+        if (!st || !(ev.total > 0)) continue; // skip START / CONTRIB / END / money-in
+        const px = xForDate(ev.date);
+        if (px < area.left - 2 || px > area.right + 2) continue;
+        const py = ys.getPixelForValue(ev.total);
+        if (!(py >= area.top - 2 && py <= area.bottom + 2)) continue;
+        const key = ev.date + ev.action;
+        drawSmaMarker(cx, px, py, st, key === hoveredKey);
+        _smaMarkers.push({ x: px, y: py, ev, st, ulName, key });
+      }
+      cx.restore();
+    }
+  };
+
   chart = new Chart(ctx, {
     type: 'line',
-    plugins: [endLabelPlugin],
+    plugins: [endLabelPlugin, smaMarkerPlugin],
     data: {
       labels,
       datasets: [
@@ -1706,6 +2057,13 @@ function render() {
   syncEnvelopeVisibility();
   clampChartMin(chart);
   chart.update('none');
+  // SMA action-marker hover (chart is created exactly once, so attach here).
+  chart.canvas.addEventListener('mousemove', handleSmaMarkerHover);
+  chart.canvas.addEventListener('mouseleave', () => {
+    const tt = document.getElementById('marker-tooltip');
+    if (tt) tt.style.display = 'none';
+    if (_smaHoverKey !== null) { _smaHoverKey = null; if (chart.draw) chart.draw(); }
+  });
   } // end else (first render)
 
   // Stash latest data for the side-panel log tables. Normally this is the
@@ -1725,6 +2083,10 @@ function render() {
       smaLog:     cs.smaLog     || smaLog,
     };
   }
+  // The marker plugin reads _logData.smaLog, which is only finalized here —
+  // after the chart's update/draw above ran with the PREVIOUS render's data.
+  // Repaint once so the markers reflect this render's events (no one-frame lag).
+  if (chart && chart.draw) chart.draw();
 
   // Base line is drawn — put the user's in-progress edits back on the controls
   // before the sidebar/legends rebuild from them (so the panel shows the edits,

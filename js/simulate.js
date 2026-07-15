@@ -49,11 +49,14 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   // laddered, matching the canonical "sell immediately, DCA back in" pattern.
   const dcaInMonths    = Math.max(0, +opts.dcaInMonths    || 0);
   const dcaToOutMonths = Math.max(0, +opts.dcaToOutMonths || 0);
-  // Bodyguard thresholds (% above unleveraged-underlying SMA). 0 = off.
-  // delev: leveraged → unleveraged swap. gtfo: everything → cash. Bodyguard
-  // transitions are instant (override DCA) — the whole point is emergency exit.
-  const bgDelev = +opts.bgDelevPct || 0;
+  // Bodyguard threshold (% above unleveraged-underlying SMA). 0 = off.
+  // gtfo: sell everything to cash. Instant (overrides DCA) — it's an emergency
+  // exit for froth, so it fires no matter what the primary signal says.
   const bgGtfo  = +opts.bgGtfoPct  || 0;
+  // Trading cost (fees + slippage) charged as a fraction of every buy and sell
+  // leg's dollar value. 0 = frictionless. A switch (sell A, buy B) pays it
+  // twice — once per leg — which matches real round-trip cost.
+  const cost = Math.max(0, +opts.tradeCostPct || 0) / 100;
   // RSI periods (Wilder). The overheat-exit and cool-gate-entry rules each get
   // their own period; legacy opts.rsiWindow is the fallback for both.
   const rsiOhWindow   = +opts.rsiOhWindow   || +opts.rsiWindow || 10;
@@ -91,17 +94,20 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   const endDate   = quarterlyData[exitIdx][0];
   // row layout: [date, tqqq, qqq, spy, qld, sso, spxl] — sigAsset is QQQ
   // (col 2) or SPY (col 3); the leveraged underlying is selected via ulCol.
-  const assetCol  = smaAsset === 'qqq' ? 2 : 3;
+  const assetCol  = SMA_ASSET_COL[smaAsset] || 2;
 
   // Underlying asset name (for state-machine target comparisons). Resolve from
   // ulCol so non-default underlyings get the right unleveraged sibling.
   const ulName = Object.keys(SMA_ASSET_COL).find(k => SMA_ASSET_COL[k] === ulCol) || 'tqqq';
-  const unlevName = SMA_UNLEVERAGED_OF[ulName] || 'qqq';
-  const unlevCol  = SMA_ASSET_COL[unlevName];
-  // Bodyguard SMA — same window as primary, but always on the unleveraged
-  // underlying ("% above QQQ-200" is the canonical dot-com gauge).
-  const bgSmaAtStep = (bgDelev > 0 || bgGtfo > 0)
-    ? (haveDaily ? smaAtDailyByKey[unlevName + '_' + smaWindow] : smaAtMonthlyByKey[unlevName + '_' + smaWindow])
+  // Which ticker the bubble gauge measures. Defaults to the unleveraged sibling
+  // of the fund (QQQ for TQQQ) — the canonical dot-com gauge — but the user can
+  // pick any tradeable ticker.
+  const bgAsset = (opts.bgAsset || SMA_UNLEVERAGED_OF[ulName] || 'qqq').toLowerCase();
+  const bgCol   = SMA_ASSET_COL[bgAsset] || SMA_ASSET_COL.qqq;
+  // Bodyguard SMA — the bubble ticker's own moving average, same window as the
+  // primary signal ("% above its average").
+  const bgSmaAtStep = (bgGtfo > 0)
+    ? (haveDaily ? smaAtDailyByKey[bgAsset + '_' + smaWindow] : smaAtMonthlyByKey[bgAsset + '_' + smaWindow])
     : null;
 
   // First step index at-or-after the entry quarter; last at-or-before exit.
@@ -131,22 +137,20 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (rsiCool > 0 && rsiCoolVal != null && rsiCoolVal >= rsiCool) return 'out'; // wait for pullback
     return asset > sma * (1 + entryBuf) ? 'in' : 'out';
   }
-  // Bodyguard: returns 'gtfo' / 'delev' / 'normal' based on the unleveraged
-  // underlying's % above its own SMA. Both thresholds must be > 0 to fire.
+  // Bodyguard: returns 'gtfo' / 'normal' based on the unleveraged underlying's
+  // % above its own SMA. Fires only when the threshold is > 0.
   function evalBodyguard(unlevPrice, unlevSma) {
     if (!unlevSma || unlevSma <= 0 || unlevPrice <= 0) return 'normal';
     const aboveBy = (unlevPrice / unlevSma - 1) * 100;
-    if (bgGtfo  > 0 && aboveBy >= bgGtfo)  return 'gtfo';
-    if (bgDelev > 0 && aboveBy >= bgDelev) return 'delev';
+    if (bgGtfo > 0 && aboveBy >= bgGtfo) return 'gtfo';
     return 'normal';
   }
-  // Compose primary + bodyguard into a single target asset name. Bodyguard
-  // wins (gtfo → cash, delev → unleveraged); else primary decides between the
-  // underlying and the out-asset.
+  // Compose primary + bodyguard into a single target asset name. The bodyguard
+  // wins (gtfo → cash); otherwise the primary decides between the underlying
+  // and the out-asset.
   function computeTarget(primary, bg) {
     if (bg === 'gtfo') return 'cash';
     if (primary === 'out') return outAsset;
-    if (bg === 'delev') return unlevName;
     return ulName;
   }
   // Initial state: SMA + buffer + RSI on the entry step.
@@ -163,8 +167,8 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   let pendingState = state, pendingCount = 0;
   // Initial bodyguard read (same step).
   const bgSma0 = bgSmaAtStep ? bgSmaAtStep[mStart] : null;
-  const unlev0 = sm0[unlevCol] || 0;
-  let bgState = evalBodyguard(unlev0, bgSma0);
+  const bg0 = sm0[bgCol] || 0;
+  let bgState = evalBodyguard(bg0, bgSma0);
 
   // Holdings: shares per tradeable asset (tqqq, qqq, spy, qld, sso, spxl) +
   // cash. Multiple buckets coexist mid-DCA; non-target buckets are sold instantly
@@ -186,7 +190,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   let target = computeTarget(state, bgState);
   if (target !== 'cash') {
     const p0 = priceOf(sm0, target);
-    if (p0 > 0) { shares[target] = cash / p0; cash = 0; }
+    if (p0 > 0) { shares[target] = (cash * (1 - cost)) / p0; cash = 0; }
   }
   let dcaRemaining = 0; // 0 = no active DCA (target already reached or all-cash)
 
@@ -203,7 +207,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   // DELEV / GTFO / RESUME), not one row per quarter.
   const smaLog = [{
     date: sm0[0],
-    state, action: 'START',
+    state, held: computeTarget(state, bgState), action: 'START',
     price: ul0, shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,  // leveraged-side share count
     stockVal: totalAt(sm0) - cash, cash, total: totalAt(sm0),
     invested: initial,
@@ -229,8 +233,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   function actionFor(prevTarget, newTarget, primary, bg, prevBg) {
     if (prevTarget === newTarget) return null;
     if (bg === 'gtfo' && prevBg !== 'gtfo') return 'BG-GTFO';
-    if (bg === 'delev' && prevBg !== 'delev') return 'BG-DELEV';
-    if (prevBg === 'gtfo' || prevBg === 'delev') return 'BG-CLEAR';
+    if (prevBg === 'gtfo') return 'BG-CLEAR';
     return primary === 'in' ? 'ENTER' : 'EXIT';
   }
 
@@ -239,7 +242,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     const mDate  = row[0];
     const ulP    = row[ulCol] || 0;
     const assetP = row[assetCol] || 0;
-    const unlevP = row[unlevCol] || 0;
+    const bgP    = row[bgCol] || 0;
     const sma    = smaAtStep[m];
     const rsiOhV   = rsiOhAtStep   ? rsiOhAtStep[m]   : null;
     const rsiCoolV = rsiCoolAtStep ? rsiCoolAtStep[m] : null;
@@ -275,7 +278,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     } else {
       pendingState = state; pendingCount = 0;
     }
-    bgState = evalBodyguard(unlevP, bgSma);
+    bgState = evalBodyguard(bgP, bgSma);
     const prevTarget = target;
     target  = computeTarget(state, bgState);
 
@@ -289,7 +292,7 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
       for (const a of Object.keys(shares)) {
         if (a !== target && shares[a] > 0) {
           const p = priceOf(row, a);
-          if (p > 0) { cash += shares[a] * p; shares[a] = 0; }
+          if (p > 0) { cash += shares[a] * p * (1 - cost); shares[a] = 0; }
         }
       }
       // Bodyguard transitions are always instant; otherwise the ladder
@@ -308,10 +311,10 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
         if (dcaRemaining > 1) {
           if (newMonth) {
             const buy = cash * (1 / dcaRemaining);
-            shares[target] += buy / p; cash -= buy; dcaRemaining--;
+            shares[target] += (buy * (1 - cost)) / p; cash -= buy; dcaRemaining--;
           }
         } else {
-          shares[target] += cash / p; cash = 0;
+          shares[target] += (cash * (1 - cost)) / p; cash = 0;
           if (dcaRemaining === 1) dcaRemaining = 0;
         }
       }
@@ -320,7 +323,19 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     const flippedAction = actionFor(prevTarget, target, state, bgState, prevBg);
     if (flippedAction) {
       smaLog.push({
-        date: mDate, state, action: flippedAction,
+        date: mDate, state, held: target, action: flippedAction,
+        price: ulP, shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,
+        stockVal: totalAt(row) - cash,
+        cash, total: totalAt(row),
+        invested: totalInvested,
+      });
+    } else if (newMonth && currentMonthly > 0) {
+      // No trade this step, but a monthly contribution went in — log it so the
+      // money-in events show up in the transaction list too. (On a step that
+      // also flips, the trade row above already reflects the new contribution,
+      // so we don't double-log.)
+      smaLog.push({
+        date: mDate, state, held: target, action: 'CONTRIB', contribAmt: currentMonthly,
         price: ulP, shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,
         stockVal: totalAt(row) - cash,
         cash, total: totalAt(row),
@@ -333,6 +348,23 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (qEnds.has(mDate)) {
       smaPoints.push({ date: mDate, value: totalAt(row), state });
     }
+  }
+
+  // Final snapshot: after the last logged event you keep holding, and the
+  // position drifts with the market to the end of the range. Nothing triggers
+  // a log row in that stretch, so the table would otherwise end BELOW/ABOVE the
+  // chart's endpoint. Append an "end of range" row (unless the last event is
+  // already at the final step) so the table's last Total matches the chart.
+  const lastRow = stepRows[mEnd];
+  if (lastRow && (!smaLog.length || smaLog[smaLog.length - 1].date !== lastRow[0])) {
+    smaLog.push({
+      date: lastRow[0], state, held: target, action: 'END',
+      price: lastRow[ulCol] || 0,
+      shares: shares.tqqq + shares.qld + shares.sso + shares.spxl,
+      stockVal: totalAt(lastRow) - cash,
+      cash, total: totalAt(lastRow),
+      invested: totalInvested,
+    });
   }
 
   return { smaPoints, smaLog, ddControls, totalContributed: totalInvested };

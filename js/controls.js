@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-gtfo','select-sma-bg-asset','select-sma-cost'];
 const LS_KEY = '9sig-sliders';
 // Bump APP_VERSION whenever a backwards-incompatible change ships (a control
 // id is renamed, a default flips, a strategy is dropped). On mismatch we
@@ -145,7 +145,7 @@ function saveSliders() {
     render();
   });
 });
-['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
+['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-gtfo','select-sma-bg-asset','select-sma-cost'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => {
     saveSliders();
@@ -523,8 +523,9 @@ function shareConfig() {
   if (get('select-sma-out-asset'))   params.set('soa', get('select-sma-out-asset').value);
   if (get('select-sma-dca-in'))      params.set('sdi', get('select-sma-dca-in').value);
   if (get('select-sma-dca-to-out'))  params.set('sdo', get('select-sma-dca-to-out').value);
-  if (get('select-sma-bg-delev'))    params.set('sbd', get('select-sma-bg-delev').value);
   if (get('select-sma-bg-gtfo'))     params.set('sbg', get('select-sma-bg-gtfo').value);
+  if (get('select-sma-bg-asset'))    params.set('sbga', get('select-sma-bg-asset').value);
+  if (get('select-sma-cost'))        params.set('stc', get('select-sma-cost').value);
 
   // 9sig: underlying + signal-line growth + rule customization
   if (get('select-9sig-underlying')) params.set('nu', get('select-9sig-underlying').value);
