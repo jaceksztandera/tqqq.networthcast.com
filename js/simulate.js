@@ -65,7 +65,8 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
   // Confirmation filter: require the flipped signal to persist this many
   // consecutive checks before committing the trade. 0/1 = off (flip on first
   // cross). A whipsaw filter distinct from the price buffer.
-  const confirmSteps = Math.max(0, +opts.confirmSteps || 0);
+  const confirmBuy  = Math.max(0, +opts.confirmBuySteps  || +opts.confirmSteps || 0);
+  const confirmSell = Math.max(0, +opts.confirmSellSteps || +opts.confirmSteps || 0);
   const emitDD = !!opts.emitDD; // build dense multi-asset control points for max-drawdown
   const monthlyRate = annualRate / 12;
   annualRaise = annualRaise || 0;
@@ -269,7 +270,8 @@ function simulateSMA(initial, monthly, annualRate, entryIdx, exitIdx, annualRais
     if (desired !== state) {
       if (desired === pendingState) pendingCount++;
       else { pendingState = desired; pendingCount = 1; }
-      if (confirmSteps <= 1 || pendingCount >= confirmSteps) { state = desired; pendingCount = 0; }
+      const thresh = desired === 'in' ? confirmBuy : confirmSell; // 'in' = buying, 'out' = selling
+      if (thresh <= 1 || pendingCount >= thresh) { state = desired; pendingCount = 0; }
     } else {
       pendingState = state; pendingCount = 0;
     }

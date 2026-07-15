@@ -151,7 +151,7 @@ function buildNineSigRulesHtml() {
 
       <div style="margin-top:14px;font-weight:600;color:var(--text)">Safety rails</div>
       <div style="margin-top:6px">
-        &bull; <b>${bp}% buying power.</b> A buy never spends more than ${bp}% of your cash${bp < 100 ? ' — you keep some dry powder' : ''}.
+        &bull; <b>${bp}% buying power.</b> A buy never spends more than ${bp}% of your cash${bp < 100 ? ' — you keep some spare cash' : ''}.
       </div>
       <div style="margin-top:6px">
         &bull; <b>30-down no-sell.</b> ${crashRule}
@@ -974,7 +974,8 @@ function render() {
     rsiOhWindow:    +((document.getElementById('select-sma-rsi-oh-window')   || {}).value) || 10,
     rsiCoolWindow:  +((document.getElementById('select-sma-rsi-cool-window') || {}).value) || 10,
     rebalanceCheck: 'daily',
-    confirmSteps:   +((document.getElementById('select-sma-confirm')  || {}).value) || 0,
+    confirmBuySteps:  +((document.getElementById('select-sma-confirm-buy')  || {}).value) || 0,
+    confirmSellSteps: +((document.getElementById('select-sma-confirm-sell') || {}).value) || 0,
   };
   const { smaPoints, smaLog } = simulateSMA(initial, monthly, smaCashRate, simEntryIdx, exitIdx, annualRaise, smaOpts);
 

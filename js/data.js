@@ -311,7 +311,11 @@ function buildEnvelopeQData(period, dayOffset, entryDate, exitDate) {
 // the UI exposes, then sample at each monthly-data entry so the strategy
 // loop is an O(months) walk with no per-step recomputation. The heatmap
 // runs many simulations so this matters.
-const SMA_WINDOWS = [100, 150, 200, 250];
+// Every moving-average window offered in the SMA dropdown (10…300 by 10). Each
+// window's SMA series is precomputed per asset below, so this MUST stay in sync
+// with the #select-sma-window options in index.html — a window that's offered
+// but not precomputed here silently backtests to $0.
+const SMA_WINDOWS = Array.from({ length: 30 }, (_, i) => (i + 1) * 10);
 const SMA_ASSETS  = ['qqq', 'spy'];
 // RSI periods the UI exposes: every day from 2 (very twitchy) to 30 (very
 // smooth). Precomputed for each so the preview bars can sweep the whole range.
@@ -368,9 +372,40 @@ function rollingRSI(values, window) {
   return out;
 }
 
+// Build a pair of LAZY, memoizing lookup objects (daily + monthly) for one
+// indicator. Nothing is computed up front — the first time a caller reads an
+// `asset_window` key (e.g. smaAtDailyByKey['qqq_200']), that asset's series is
+// computed once via computeFn(dailyValues, window), cached, and returned; the
+// monthly variant additionally samples it onto month-end positions. This means
+// offering 30 SMA windows × 2 assets costs nothing until a window is actually
+// used, and opening a preview that sweeps every window pays only for the ones
+// it reads. Call sites are unchanged: they still index these like plain maps.
+function makeLazyIndicator(seriesByAsset, toMonthly, computeFn) {
+  const dailyBase = {};   // key -> computed daily series (shared by both proxies)
+  const computeDaily = (key) => {
+    if (key in dailyBase) return dailyBase[key];
+    const us = String(key).lastIndexOf('_');
+    if (us <= 0) return (dailyBase[key] = undefined);
+    const asset = key.slice(0, us);
+    const w = +key.slice(us + 1);
+    if (!(w > 0) || !seriesByAsset[asset]) return (dailyBase[key] = undefined);
+    return (dailyBase[key] = computeFn(seriesByAsset[asset], w));
+  };
+  const lazyGet = (cache, key, monthly) => {
+    if (typeof key !== 'string' || key.indexOf('_') < 0) return cache[key];
+    if (key in cache) return cache[key];
+    const d = computeDaily(key);
+    return (cache[key] = d === undefined ? undefined : (monthly ? toMonthly(d) : d));
+  };
+  return {
+    daily:   new Proxy({}, { get: (t, k) => lazyGet(t, k, false) }),
+    monthly: new Proxy({}, { get: (t, k) => lazyGet(t, k, true)  }),
+  };
+}
+
 function precomputeSMASeries() {
-  smaAtMonthlyByKey = {}; smaAtDailyByKey = {};
-  rsiAtMonthlyByKey = {}; rsiAtDailyByKey = {};
+  smaAtMonthlyByKey = null; smaAtDailyByKey = null;
+  rsiAtMonthlyByKey = null; rsiAtDailyByKey = null;
   dailyRows = null;
   if (!daily || !monthlyData || !dailyDateToIdx) return;
   // Sample a full daily series onto monthlyData positions.
@@ -379,18 +414,11 @@ function precomputeSMASeries() {
     return idx != null ? dailyArr[idx] : null;
   });
   const seriesByAsset = { qqq: daily.map(d => d.qqq), spy: daily.map(d => d.spy) };
-  for (const asset of SMA_ASSETS) {
-    const dailyVals = seriesByAsset[asset];
-    for (const w of SMA_WINDOWS) {
-      const dailySMA = rollingSMA(dailyVals, w);
-      smaAtDailyByKey[asset + '_' + w]   = dailySMA;
-      smaAtMonthlyByKey[asset + '_' + w] = toMonthly(dailySMA);
-    }
-    for (const rw of RSI_WINDOWS) {
-      const dailyRSI = rollingRSI(dailyVals, rw);
-      rsiAtDailyByKey[asset + '_' + rw]   = dailyRSI;
-      rsiAtMonthlyByKey[asset + '_' + rw] = toMonthly(dailyRSI);
-    }
-  }
+
+  const sma = makeLazyIndicator(seriesByAsset, toMonthly, rollingSMA);
+  smaAtDailyByKey = sma.daily; smaAtMonthlyByKey = sma.monthly;
+  const rsi = makeLazyIndicator(seriesByAsset, toMonthly, rollingRSI);
+  rsiAtDailyByKey = rsi.daily; rsiAtMonthlyByKey = rsi.monthly;
+
   dailyRows = daily.map(d => [d.date, d.tqqq, d.qqq, d.spy, d.qld, d.sso, d.spxl]);
 }

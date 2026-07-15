@@ -1379,7 +1379,8 @@ function _smaParamsForAnalytics() {
     rsiOhWindow:    +((document.getElementById('select-sma-rsi-oh-window')   || {}).value) || 10,
     rsiCoolWindow:  +((document.getElementById('select-sma-rsi-cool-window') || {}).value) || 10,
     rebalanceCheck: 'daily',
-    confirmSteps:   +((document.getElementById('select-sma-confirm')  || {}).value) || 0,
+    confirmBuySteps:  +((document.getElementById('select-sma-confirm-buy')  || {}).value) || 0,
+    confirmSellSteps: +((document.getElementById('select-sma-confirm-sell') || {}).value) || 0,
   };
 }
 
@@ -1449,6 +1450,11 @@ function analyticsConfigPoints(cfg, initial, monthly, rate, annualRaise, entryId
       dcaToOutMonths: +get(p, 'select-sma-dca-to-out', 0) || 0,
       bgDelevPct: +get(p, 'select-sma-bg-delev', 0) || 0,
       bgGtfoPct: +get(p, 'select-sma-bg-gtfo', 0) || 0,
+      rsiOhWindow: +get(p, 'select-sma-rsi-oh-window', 10) || 10,
+      rsiCoolWindow: +get(p, 'select-sma-rsi-cool-window', 10) || 10,
+      rebalanceCheck: 'daily',
+      confirmBuySteps: +get(p, 'select-sma-confirm-buy', 0) || 0,
+      confirmSellSteps: +get(p, 'select-sma-confirm-sell', 0) || 0,
     };
     const cashRate = (+get(p, 'select-sma-cashrate', 4) || 0) / 100;
     const r = simulateSMA(initial, monthly, cashRate, entryIdx, exitIdx, annualRaise, opts);

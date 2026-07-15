@@ -335,7 +335,19 @@
     overflow-y: auto;
     overflow-x: hidden;
     font-family: 'JetBrains Mono', monospace;
+    /* Slim, on-theme scrollbar for the long (10–300 / RSI) option lists. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100,116,139,0.5) transparent;
   }
+  .pdrop-popup::-webkit-scrollbar { width: 8px; }
+  .pdrop-popup::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+  .pdrop-popup::-webkit-scrollbar-thumb {
+    background: rgba(100,116,139,0.5);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .pdrop-popup::-webkit-scrollbar-thumb:hover { background: rgba(34,211,238,0.65); background-clip: padding-box; }
   .pdrop-head {
     font-family: 'DM Sans', sans-serif;
     font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
@@ -347,7 +359,7 @@
      bars don't jump when the "…" placeholders fill with dollar figures. */
   .pdrop-row {
     display: grid;
-    grid-template-columns: var(--pdrop-label-w, auto) 1fr 56px;
+    grid-template-columns: var(--pdrop-label-w, auto) 1fr 74px;
     align-items: center;
     gap: 8px;
     padding: 5px 8px;
@@ -361,6 +373,11 @@
   .pdrop-track {
     height: 8px; border-radius: 4px; background: rgba(148,163,184,0.14);
     overflow: hidden;
+    /* The popup is shrink-to-fit (min-width only), so this 1fr column would
+       collapse to 0 when labels are long ("never too hot (off)") + the value
+       column is wide — hiding the bars entirely. A min-width guarantees a
+       visible bar track no matter how wide the label/value columns get. */
+    min-width: 60px;
   }
   .pdrop-fill {
     display: block; height: 100%; width: 0;
@@ -368,6 +385,13 @@
     transition: width 0.25s ease;
   }
   .pdrop-row.best .pdrop-fill { background: var(--green, #4ade80); }
+  /* Plateau marker: a row whose value repeats the one directly above it — the
+     setting has stopped changing the outcome (e.g. a bubble-insurance threshold
+     too high to ever trigger in the viewed range). Dim the bar and prefix the
+     value with "=" so a run of identical bars reads as intentional, not broken. */
+  .pdrop-repeat .pdrop-fill { opacity: 0.4; }
+  .pdrop-repeat .pdrop-rval { opacity: 0.65; }
+  .pdrop-repeat .pdrop-rval::before { content: '= '; opacity: 0.6; }
   .pdrop-rval {
     font-size: 11px; color: var(--text); white-space: nowrap; text-align: right;
   }

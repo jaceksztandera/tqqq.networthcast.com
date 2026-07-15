@@ -1,6 +1,6 @@
 // Slider max is set in init() after data loads
 
-const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
+const SLIDER_IDS = ['slider-initial','slider-monthly','slider-raise','slider-rate','slider-entry','slider-exit','select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'];
 const LS_KEY = '9sig-sliders';
 // Bump APP_VERSION whenever a backwards-incompatible change ships (a control
 // id is renamed, a default flips, a strategy is dropped). On mismatch we
@@ -145,7 +145,7 @@ function saveSliders() {
     render();
   });
 });
-['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-cool','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
+['select-bh-underlying','select-sma-asset','select-sma-window','select-sma-underlying','select-9sig-underlying','select-9sig-growth','select-9sig-crashdrop','select-9sig-crashwin','select-9sig-spike','select-9sig-period','select-9sig-cash','select-9sig-cashrate','select-9sig-buypower','select-9sig-deploy','select-9sig-target-compound','select-9sig-park-asset','select-sma-cashrate','select-sma-entry-buf','select-sma-exit-buf','select-sma-rsi-oh','select-sma-rsi-oh-window','select-sma-rsi-cool','select-sma-rsi-cool-window','select-sma-confirm-buy','select-sma-confirm-sell','select-sma-out-asset','select-sma-dca-in','select-sma-dca-to-out','select-sma-bg-delev','select-sma-bg-gtfo'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => {
     saveSliders();
@@ -156,6 +156,7 @@ function saveSliders() {
       refresh9sigDisplayLabels();
     }
     if (id === 'select-9sig-cash' || id === 'select-9sig-park-asset') update9sigCashSpans();
+    if (id === 'select-sma-out-asset') updateSmaCashRateVisibility();
     render();
   });
 });
@@ -174,6 +175,15 @@ function update9sigCashSpans() {
   const park = ((document.getElementById('select-9sig-park-asset') || {}).value) || 'cash';
   const rateRow = document.getElementById('9sig-cashrate-row');
   if (rateRow) rateRow.style.display = park === 'cash' ? '' : 'none';
+}
+
+// The SMA cash-interest line only makes sense when you actually sit in cash
+// after a sell. If you hold QQQ/SPY instead, there's no idle cash to earn
+// interest — so hide the rate line entirely rather than show a dead control.
+function updateSmaCashRateVisibility() {
+  const out = ((document.getElementById('select-sma-out-asset') || {}).value) || 'cash';
+  const line = document.getElementById('sma-cashrate-line');
+  if (line) line.style.display = out === 'cash' ? '' : 'none';
 }
 
 // The "Deploy 50% of each contribution" toggle only does anything when there
@@ -503,8 +513,12 @@ function shareConfig() {
   if (get('select-sma-underlying'))  params.set('su',  get('select-sma-underlying').value);
   if (get('select-sma-entry-buf'))   params.set('seb', get('select-sma-entry-buf').value);
   if (get('select-sma-exit-buf'))    params.set('sxb', get('select-sma-exit-buf').value);
-  if (get('select-sma-rsi-oh'))      params.set('sro', get('select-sma-rsi-oh').value);
-  if (get('select-sma-rsi-cool'))    params.set('src', get('select-sma-rsi-cool').value);
+  if (get('select-sma-rsi-oh'))         params.set('sro',  get('select-sma-rsi-oh').value);
+  if (get('select-sma-rsi-oh-window'))  params.set('srow', get('select-sma-rsi-oh-window').value);
+  if (get('select-sma-rsi-cool'))       params.set('src',  get('select-sma-rsi-cool').value);
+  if (get('select-sma-rsi-cool-window')) params.set('srcw', get('select-sma-rsi-cool-window').value);
+  if (get('select-sma-confirm-buy'))    params.set('scb',  get('select-sma-confirm-buy').value);
+  if (get('select-sma-confirm-sell'))   params.set('scs',  get('select-sma-confirm-sell').value);
   if (get('select-sma-cashrate'))    params.set('scr', get('select-sma-cashrate').value);
   if (get('select-sma-out-asset'))   params.set('soa', get('select-sma-out-asset').value);
   if (get('select-sma-dca-in'))      params.set('sdi', get('select-sma-dca-in').value);

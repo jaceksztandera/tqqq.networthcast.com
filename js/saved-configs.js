@@ -24,7 +24,7 @@ const CONFIG_PARAM_IDS = {
            'select-sma-cashrate', 'select-sma-entry-buf', 'select-sma-exit-buf',
            'select-sma-rsi-oh', 'select-sma-rsi-cool',
            'select-sma-rsi-oh-window', 'select-sma-rsi-cool-window',
-           'select-sma-confirm',
+           'select-sma-confirm-buy', 'select-sma-confirm-sell',
            'select-sma-out-asset', 'select-sma-dca-in', 'select-sma-dca-to-out',
            'select-sma-bg-delev', 'select-sma-bg-gtfo'],
   'bh':   ['select-bh-underlying'],
@@ -817,7 +817,8 @@ function computeConfigSeries(cfg, ctx) {
       rsiOhWindow: +pget(p, 'select-sma-rsi-oh-window', 10) || 10,
       rsiCoolWindow: +pget(p, 'select-sma-rsi-cool-window', 10) || 10,
       rebalanceCheck: 'daily',
-      confirmSteps: +pget(p, 'select-sma-confirm', 0) || 0,
+      confirmBuySteps: +pget(p, 'select-sma-confirm-buy', 0) || 0,
+      confirmSellSteps: +pget(p, 'select-sma-confirm-sell', 0) || 0,
       emitDD: true,
     };
     const cashRate = (+pget(p, 'select-sma-cashrate', 4) || 0) / 100;
@@ -1159,6 +1160,7 @@ function resetBaseControlsToCanonical(type) {
   applyParams(type, captureDefaultParams(type));
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans === 'function') update9sigCashSpans();
+  if (typeof updateSmaCashRateVisibility === 'function') updateSmaCashRateVisibility();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   if (typeof window.refreshPreviewTriggers === 'function') window.refreshPreviewTriggers();
 }
@@ -1358,6 +1360,7 @@ function openConfigForEdit(id) {
   applyParams(cfg.type, cfg.params);
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans === 'function') update9sigCashSpans();
+  if (typeof updateSmaCashRateVisibility === 'function') updateSmaCashRateVisibility();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   if (typeof saveSliders === 'function') saveSliders();
   window._editingConfigId = id;

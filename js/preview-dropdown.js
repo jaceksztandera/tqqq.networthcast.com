@@ -45,7 +45,8 @@
     'select-sma-bg-gtfo':     { kind: 'sma', apply: (p, v) => { p.bgGtfoPct = +v; } },
     'select-sma-rsi-oh-window':   { kind: 'sma', apply: (p, v) => { p.rsiOhWindow = +v; } },
     'select-sma-rsi-cool-window': { kind: 'sma', apply: (p, v) => { p.rsiCoolWindow = +v; } },
-    'select-sma-confirm':         { kind: 'sma', apply: (p, v) => { p.confirmSteps = +v; } },
+    'select-sma-confirm-buy':     { kind: 'sma', apply: (p, v) => { p.confirmBuySteps = +v; } },
+    'select-sma-confirm-sell':    { kind: 'sma', apply: (p, v) => { p.confirmSellSteps = +v; } },
   };
   const PREVIEW_SELECT_IDS = Object.keys(PREVIEW_SELECTS);
 
@@ -106,7 +107,8 @@
       rsiOhWindow: _num('select-sma-rsi-oh-window', 10),
       rsiCoolWindow: _num('select-sma-rsi-cool-window', 10),
       rebalanceCheck: 'daily',
-      confirmSteps: _num('select-sma-confirm', 0),
+      confirmBuySteps: _num('select-sma-confirm-buy', 0),
+      confirmSellSteps: _num('select-sma-confirm-sell', 0),
     });
   }
 
@@ -127,7 +129,7 @@
       outAsset: p.outAsset, dcaInMonths: p.dcaInMonths, dcaToOutMonths: p.dcaToOutMonths,
       bgDelevPct: p.bgDelevPct, bgGtfoPct: p.bgGtfoPct,
       rsiOhWindow: p.rsiOhWindow, rsiCoolWindow: p.rsiCoolWindow,
-      rebalanceCheck: p.rebalanceCheck, confirmSteps: p.confirmSteps,
+      rebalanceCheck: p.rebalanceCheck, confirmBuySteps: p.confirmBuySteps, confirmSellSteps: p.confirmSellSteps,
     });
     return (r.smaPoints && r.smaPoints.length) ? r.smaPoints[r.smaPoints.length - 1].value : 0;
   }
@@ -288,15 +290,32 @@
       try { totals = totalsFor(select); } catch (e) { return; }
       const rows = Array.from(popup.querySelectorAll('.pdrop-row'));
       const maxT = Math.max(0, ...totals);
-      const bestIdx = totals.indexOf(maxT);
+      // Highlight EVERY row tied for the top, not just the first. Ties are
+      // judged on the shown value so the colouring always matches what the
+      // user reads — if two bars display the same number, both go green.
+      const maxLabel = fmt(Math.round(maxT));
+      // Plateau detection: mark rows as "same as above" ONLY when they're part
+      // of a genuine flat run (3+ consecutive identical values) — e.g. a
+      // bubble-insurance threshold too high to ever trigger across a whole
+      // range. A lone duplicate (just two equal adjacent rows) isn't a plateau
+      // and a solitary "=" reads as a glitch, so it's left unmarked.
+      const labels = totals.map(t => fmt(Math.round(t)));
+      const isPlateauRepeat = new Array(labels.length).fill(false);
+      for (let a = 0; a < labels.length;) {
+        let b = a;
+        while (b + 1 < labels.length && labels[b + 1] === labels[a]) b++;
+        if (b - a + 1 >= 3) for (let k = a + 1; k <= b; k++) isPlateauRepeat[k] = true;
+        a = b + 1;
+      }
       rows.forEach((row, i) => {
         const t = totals[i];
         const pct = maxT > 0 ? Math.max(1.5, (t / maxT) * 100) : 0;
         const fill = row.querySelector('.pdrop-fill');
         const val  = row.querySelector('.pdrop-rval');
         fill.style.width = pct + '%';
-        val.textContent = fmt(Math.round(t));
-        if (i === bestIdx && maxT > 0) row.classList.add('best');
+        val.textContent = labels[i];
+        if (maxT > 0 && labels[i] === maxLabel) row.classList.add('best');
+        row.classList.toggle('pdrop-repeat', isPlateauRepeat[i]);
       });
     }, 0);
   }

@@ -61,7 +61,11 @@
   if (params.get('seb') !== null) { document.getElementById('select-sma-entry-buf').value   = params.get('seb'); hasUrlParams = true; }
   if (params.get('sxb') !== null) { document.getElementById('select-sma-exit-buf').value    = params.get('sxb'); hasUrlParams = true; }
   if (params.get('sro') !== null) { document.getElementById('select-sma-rsi-oh').value      = params.get('sro'); hasUrlParams = true; }
+  if (params.get('srow') !== null) { document.getElementById('select-sma-rsi-oh-window').value = params.get('srow'); hasUrlParams = true; }
   if (params.get('src') !== null) { document.getElementById('select-sma-rsi-cool').value    = params.get('src'); hasUrlParams = true; }
+  if (params.get('srcw') !== null) { document.getElementById('select-sma-rsi-cool-window').value = params.get('srcw'); hasUrlParams = true; }
+  if (params.get('scb') !== null) { document.getElementById('select-sma-confirm-buy').value  = params.get('scb'); hasUrlParams = true; }
+  if (params.get('scs') !== null) { document.getElementById('select-sma-confirm-sell').value = params.get('scs'); hasUrlParams = true; }
   if (params.get('scr') !== null) { document.getElementById('select-sma-cashrate').value    = params.get('scr'); hasUrlParams = true; }
   if (params.get('soa') !== null) { document.getElementById('select-sma-out-asset').value   = params.get('soa'); hasUrlParams = true; }
   if (params.get('sdi') !== null) { document.getElementById('select-sma-dca-in').value      = params.get('sdi'); hasUrlParams = true; }
@@ -130,6 +134,7 @@
   // analytics modal before first render (e.g. URL ?ng=15 → "15sig").
   if (typeof refresh9sigDisplayLabels === 'function') refresh9sigDisplayLabels();
   if (typeof update9sigCashSpans      === 'function') update9sigCashSpans();
+  if (typeof updateSmaCashRateVisibility === 'function') updateSmaCashRateVisibility();
   if (typeof updateDeployAvailability === 'function') updateDeployAvailability();
   // Don't offer the localStorage "reset saved data" prompt when viewing a
   // shared link — clicking it would reload to a clean URL and lose the link.
